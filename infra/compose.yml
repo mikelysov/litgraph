@@ -24,14 +24,18 @@ services:
     working_dir: /app
     volumes:
       - ../backend:/app
+      - /mnt/d/colab/llms/bge-m3:/models/bge-m3:ro
     env_file:
       - ./qdrant/.env
       - ./app/.env
+    environment:
+      - EMBEDDING_MODEL_PATH=/models/bge-m3
     depends_on:
       qdrant:
         condition: service_started
+      redis:
+        condition: service_started
     command: ["uv", "run", "poe", "server"]
-    ports: ["8000:8000"]
     profiles: ["app"]
 
   worker:
@@ -42,11 +46,16 @@ services:
     working_dir: /app
     volumes:
       - ../backend:/app
+      - /mnt/d/colab/llms/bge-m3:/models/bge-m3:ro
     env_file:
       - ./qdrant/.env
       - ./app/.env
+    environment:
+      - EMBEDDING_MODEL_PATH=/models/bge-m3
     depends_on:
       qdrant:
+        condition: service_started
+      redis:
         condition: service_started
     command: ["uv", "run", "--", "python", "-c", "from src.worker import run_worker_loop; run_worker_loop()"]
     profiles: ["worker"]
@@ -68,6 +77,35 @@ services:
       api:
         condition: service_started
     profiles: ["frontend-dev"]
+
+  mcp:
+    build:
+      context: ..
+      dockerfile: ./backend/Dockerfile
+      target: cpu
+    working_dir: /app
+    volumes:
+      - ../backend:/app
+      - ../docs:/docs:ro
+      - /mnt/d/colab/llms/bge-m3:/models/bge-m3:ro
+      - /mnt/d/colab/llms/gemma-3-4b-it:/models/gemma-3-4b-it:ro
+      - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
+    env_file:
+      - ./qdrant/.env
+      - ./app/.env
+    environment:
+      - EMBEDDING_MODEL_PATH=/models/bge-m3
+      - EMBEDDING_DIM=1024
+      - LLM_MODEL_PATH=/models/gemma-3-4b-it
+      - RERANKER_MODEL_PATH=/models/jina-reranker-v3
+    depends_on:
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_started
+    command: ["uv", "run", "python", "src/mcp_server.py"]
+    ports: ["8888:8888"]
+    profiles: ["app"]
 
   # PROD: nginx serving built assets
   frontend-prod:

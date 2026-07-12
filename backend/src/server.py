@@ -8,6 +8,8 @@ from loguru import logger
 
 from src.api import router
 from src.store import health_check
+from src.embedder import preload as preload_embedder
+from src.llm import preload as preload_llm
 
 load_dotenv()
 
@@ -30,6 +32,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error("Health check failed. Exiting...")
         raise RuntimeError("Health check failed.")
     logger.info("Health check passed.")
+    logger.info("Preloading models...")
+    preload_embedder()
+    preload_llm()
+    logger.info("All models loaded.")
     yield
 
 

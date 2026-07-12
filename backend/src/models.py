@@ -96,6 +96,7 @@ class SearchResult(BaseModel):
     id: str
     title: str
     authors: list[str]
+    abstract: str = ""
     score: float | None = Field(
         default=None,
         description="Score of the search result",

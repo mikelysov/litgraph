@@ -64,3 +64,42 @@ def fetch_papers(query: str, max_results: int = 5) -> list[Paper]:
         papers.append(Paper(id=paper_id, url=url, title=title, abstract=abstract, authors=authors))
 
     return papers
+
+
+def fetch_paper_by_id(arxiv_id: str) -> Paper | None:
+    """Fetch a single paper by its arXiv ID (e.g. '2203.13790').
+
+    Strips version suffix (v1, v2, etc.) and .pdf extension.
+    Returns None if not found or API error.
+    """
+    import re
+
+    # Clean ID: remove .pdf, version suffix
+    clean = re.sub(r"\.pdf$", "", arxiv_id.strip())
+    clean = re.sub(r"v\d+$", "", clean)
+
+    api_url = "http://export.arxiv.org/api/query"
+    try:
+        response = requests.get(api_url, params={"id_list": clean}, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.warning(f"arXiv API error for {clean}: {e}")
+        return None
+
+    root = ET.fromstring(response.content)
+    entry = root.find("atom:entry", NAMESPACE)
+    if entry is None:
+        return None
+
+    url: str = get_text(entry.find("atom:id", NAMESPACE), required=True)
+    # Strip version suffix (v1, v2, etc.) for stable ID
+    raw_id: str = url.partition("/abs/")[-1]
+    paper_id: str = re.sub(r"v\d+$", "", raw_id)
+    title: str = get_text(entry.find("atom:title", NAMESPACE), required=True)
+    abstract: str = get_text(entry.find("atom:summary", NAMESPACE), required=True)
+    authors: list[str] = [
+        get_text(author.find("atom:name", NAMESPACE), required=True)
+        for author in entry.findall("atom:author", NAMESPACE)
+    ]
+
+    return Paper(id=paper_id, url=url, title=title, abstract=abstract, authors=authors)

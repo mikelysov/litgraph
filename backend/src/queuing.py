@@ -3,9 +3,28 @@ from upstash_redis import Redis
 
 from src.models import Paper, PaperState, PaperStatus
 from src.store import get_paper_index
+from src.store.redis import get_redis_conn
 
 QUEUE_LIST = "paper_queue"
 QUEUE_SET = "paper_queue_ids"
+
+
+def enqueue_papers(papers: list[Paper]) -> list[PaperState]:
+    redis_conn: Redis = get_redis_conn()
+    index = get_paper_index()
+    states: list[PaperState] = []
+
+    for paper in papers:
+        logger.debug(f"Enqueuing paper {paper.id} to Redis.")
+        redis_conn.rpush(QUEUE_LIST, paper.model_dump_json())
+        redis_conn.sadd(QUEUE_SET, paper.url)
+
+        state = PaperState(id=paper.id, status=PaperStatus.QUEUED, in_graph=False)
+        states.append(state)
+
+    index.set_many(states)
+    logger.info(f"Enqueued {len(papers)} papers to Redis and updated PaperIndex.")
+    return states
 
 
 def enqueue_missing(papers: list[Paper], redis_conn: Redis) -> None:

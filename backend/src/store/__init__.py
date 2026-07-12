@@ -1,5 +1,4 @@
 from .index import PaperIndex
-from .redis import is_redis_healthy
 from .vector import VectorStore, get_vector_store
 
 __all__ = ["get_vector_store", "VectorStore", "health_check", "PaperIndex"]
@@ -14,6 +13,14 @@ def get_paper_index() -> PaperIndex:
     return _paper_index
 
 
+def is_redis_available() -> bool:
+    try:
+        from .redis import is_redis_healthy
+        return is_redis_healthy()
+    except Exception:
+        return False
+
+
 def health_check() -> dict[str, bool]:
     """
     Check the health of the paper index and vector store.
@@ -22,5 +29,5 @@ def health_check() -> dict[str, bool]:
     return {
         "paper_index": get_paper_index().is_healthy(),
         "vector_store": get_vector_store().is_healthy(),
-        "redis": is_redis_healthy(),
+        "redis": is_redis_available(),
     }

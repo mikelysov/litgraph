@@ -1,18 +1,27 @@
-import random
-
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
 
-from src.factories import SearchResponseFactory
 from src.models import (
     IngestEvent,
+    Paper,
+    PaperNode,
     PaperState,
+    GraphData,
     SearchResponse,
 )
 from src.pipeline import run_pipeline
+from src.queuing import enqueue_papers
 from src.store import get_paper_index, health_check
+from src.store.core import search as vector_search
 
 router = APIRouter()
+
+
+@router.post("/ingest")
+def ingest(body: Paper) -> list[dict]:
+    logger.info(f"Ingesting paper {body.id}: {body.title[:60]}...")
+    states = enqueue_papers([body])
+    return [s.model_dump() for s in states]
 
 
 @router.get("/pipeline", response_model=list[IngestEvent])
@@ -57,9 +66,27 @@ def status(paper_id: list[str] = Query(...)) -> list[dict[str, str | bool]]:
 
 @router.get("/search", response_model=SearchResponse)
 def search(query: str = Query(..., min_length=1)):
-    # TODO: Replace this mock logic with real vector search + graph logic
     logger.debug(f"Received search query: {query}")
-    num_results = random.randint(1, 10)
-    num_nodes = random.randint(5, 15)
-    logger.debug(f"Returning {num_results} results and {num_nodes} graph nodes")
-    return SearchResponseFactory(num_results=num_results, num_nodes=num_nodes)
+    results = vector_search(query, expand_hops=1)
+    nodes = [
+        PaperNode(
+            id=r.id,
+            title=r.title,
+            authors=r.authors,
+            score=r.score,
+            related_ids=r.related_ids,
+        )
+        for r in results
+    ]
+    all_ids = {n.id for n in nodes}
+    for n in nodes:
+        if n.related_ids:
+            all_ids.update(n.related_ids)
+    graph_nodes = [
+        PaperNode(id=pid, title="", authors=[])
+        for pid in all_ids
+    ]
+    return SearchResponse(
+        results=nodes,
+        graph=GraphData(nodes=graph_nodes, edges=[]),
+    )

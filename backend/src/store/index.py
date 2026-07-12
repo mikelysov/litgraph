@@ -91,7 +91,16 @@ class PaperIndex:
                     obj.in_graph = s.in_graph  # type: ignore
                     obj.last_seen = now  # type: ignore
 
-                session.add(PaperHistory(id=s.id, state=s.status))
+                stmt = (
+                    (
+                        pg_insert
+                        if self.engine.url.get_backend_name() == "postgresql"
+                        else sqlite_insert
+                    )(PaperHistory)
+                    .values(id=s.id, state=s.status)
+                    .on_conflict_do_nothing(index_elements=["id"])
+                )
+                session.execute(stmt)
 
             session.commit()
 
