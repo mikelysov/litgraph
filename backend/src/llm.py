@@ -225,9 +225,11 @@ def _get_reranker() -> Any:
 
 
 def preload() -> None:
-    """Preload all models (LLM + reranker) into memory."""
-    _get_model()
-    _get_reranker()
+    """Preload all models (LLM + reranker) into memory. Skips if path not set."""
+    if os.getenv("LLM_MODEL_PATH"):
+        _get_model()
+    if os.getenv("RERANKER_MODEL_PATH"):
+        _get_reranker()
 
 
 def rerank(

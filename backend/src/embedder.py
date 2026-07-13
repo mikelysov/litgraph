@@ -43,8 +43,8 @@ def _local_embed(texts: list[str]) -> NDArray[np.float32]:
 
 
 def preload() -> None:
-    """Preload embedder model into memory."""
-    if not EMBEDDING_API_URL:
+    """Preload embedder model into memory. Skips if using remote API."""
+    if not EMBEDDING_API_URL and os.getenv("EMBEDDING_MODEL_PATH"):
         _local_embed(["warmup"])
 
 
