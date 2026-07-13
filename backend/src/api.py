@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
 
+from src.llm import generate_rag_answer, rerank
 from src.models import (
     IngestEvent,
     Paper,
@@ -90,3 +91,29 @@ def search(query: str = Query(..., min_length=1)):
         results=nodes,
         graph=GraphData(nodes=graph_nodes, edges=[]),
     )
+
+
+@router.get("/ask")
+def ask(query: str = Query(..., min_length=1), top_k: int = Query(5)):
+    logger.info(f"Ask: {query[:80]}")
+    raw_results = vector_search(query)
+    context = [
+        {"id": r.id, "title": r.title, "abstract": r.abstract}
+        for r in raw_results[:20]
+    ]
+    if not context:
+        return {"answer": "No relevant papers found.", "sources": [], "confidence": "low"}
+
+    context = rerank(query, context, top_k=top_k)
+    answer = generate_rag_answer(query, context)
+
+    raw_sources = answer.get("sources", [])
+    if raw_sources and isinstance(raw_sources[0], (int, float)):
+        answer["sources"] = [
+            {"id": context[idx]["id"], "title": context[idx]["title"]}
+            for s in raw_sources
+            if isinstance(s, (int, float))
+            for idx in ([int(s) - 1] if int(s) > 0 else [int(s)])
+            if 0 <= idx < len(context)
+        ]
+    return answer
