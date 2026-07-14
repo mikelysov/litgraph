@@ -24,18 +24,23 @@ services:
     working_dir: /app
     volumes:
       - ../backend:/app
-      - /mnt/d/colab/llms/bge-m3:/models/bge-m3:ro
+      - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
     env_file:
       - ./qdrant/.env
       - ./app/.env
     environment:
-      - EMBEDDING_MODEL_PATH=/models/bge-m3
+      - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
+      - EMBEDDING_MODEL=text-embedding-bge-m3
+      - LLM_API_URL=http://172.31.61.121:1234/v1
+      - LLM_MODEL=google/gemma-3-12b
+      - RERANKER_MODEL_PATH=/models/jina-reranker-v3
     depends_on:
       qdrant:
         condition: service_started
       redis:
         condition: service_started
     command: ["uv", "run", "poe", "server"]
+    ports: ["8889:8889"]
     profiles: ["app"]
 
   worker:
@@ -46,12 +51,16 @@ services:
     working_dir: /app
     volumes:
       - ../backend:/app
-      - /mnt/d/colab/llms/bge-m3:/models/bge-m3:ro
+      - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
     env_file:
       - ./qdrant/.env
       - ./app/.env
     environment:
-      - EMBEDDING_MODEL_PATH=/models/bge-m3
+      - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
+      - EMBEDDING_MODEL=text-embedding-bge-m3
+      - LLM_API_URL=http://172.31.61.121:1234/v1
+      - LLM_MODEL=google/gemma-3-12b
+      - RERANKER_MODEL_PATH=/models/jina-reranker-v3
     depends_on:
       qdrant:
         condition: service_started
@@ -87,16 +96,16 @@ services:
     volumes:
       - ../backend:/app
       - ../docs:/docs:ro
-      - /mnt/d/colab/llms/bge-m3:/models/bge-m3:ro
-      - /mnt/d/colab/llms/gemma-3-4b-it:/models/gemma-3-4b-it:ro
       - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
     env_file:
       - ./qdrant/.env
       - ./app/.env
     environment:
-      - EMBEDDING_MODEL_PATH=/models/bge-m3
+      - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
+      - EMBEDDING_MODEL=text-embedding-bge-m3
       - EMBEDDING_DIM=1024
-      - LLM_MODEL_PATH=/models/gemma-3-4b-it
+      - LLM_API_URL=http://172.31.61.121:1234/v1
+      - LLM_MODEL=google/gemma-3-12b
       - RERANKER_MODEL_PATH=/models/jina-reranker-v3
     depends_on:
       qdrant:

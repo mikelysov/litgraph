@@ -36,8 +36,8 @@ logs-%:
 
 # Shorthands
 qdrant: ; $(compose) --profile core up -d qdrant
-up-app: ; $(compose) --profile core --profile app up -d
-up-worker: ; $(compose) --profile core --profile worker up -d
+up-app: ; $(compose) --profile core --profile redis-local --profile app up -d
+up-worker: ; $(compose) --profile core --profile redis-local --profile worker up -d
 
 # Full stacks
 up-full-dev: ; $(compose_cmd) $(DEV_PROFILES) up -d

@@ -13,3 +13,6 @@ if not PAPER_INDEX_PATH.exists():
 EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-qwen3-embedding-4b@q8_0")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
+
+LLM_API_URL = os.getenv("LLM_API_URL", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "")

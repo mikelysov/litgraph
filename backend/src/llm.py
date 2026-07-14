@@ -3,9 +3,38 @@ import os
 import re
 from typing import Any
 
+import httpx
 from loguru import logger
 
+from src.config import LLM_API_URL, LLM_MODEL
+
 _LOCAL_LLM: Any = None  # (model, tokenizer)
+
+
+def _remote_generate(
+    messages: list[dict[str, str]],
+    max_new_tokens: int = 1024,
+    temperature: float = 0.6,
+    top_p: float = 0.95,
+) -> str:
+    """Generate text via remote chat completions API (OpenAI-compatible)."""
+    response = httpx.post(
+        f"{LLM_API_URL}/chat/completions",
+        json={
+            "model": LLM_MODEL,
+            "messages": messages,
+            "max_tokens": max_new_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        },
+        timeout=120.0,
+    )
+    response.raise_for_status()
+    data = response.json()
+    content = data["choices"][0]["message"]["content"]
+    # Strip thinking section and special tokens
+    content = re.sub(r'<\|im_end\|>|<\|im_start\|>|</?think>', '', content)
+    return content.strip()
 
 
 def _get_device() -> str:
@@ -63,6 +92,9 @@ def generate(
     top_p: float = 0.95,
 ) -> str:
     """Generate text from a list of messages (role: user/assistant/system)."""
+    if LLM_API_URL:
+        return _remote_generate(messages, max_new_tokens, temperature, top_p)
+
     model, tokenizer = _get_model()
 
     text = tokenizer.apply_chat_template(
@@ -225,8 +257,10 @@ def _get_reranker() -> Any:
 
 
 def preload() -> None:
-    """Preload all models (LLM + reranker) into memory. Skips if path not set."""
-    if os.getenv("LLM_MODEL_PATH"):
+    """Preload all models (LLM + reranker) into memory. Skips if remote API or path not set."""
+    if LLM_API_URL:
+        logger.info(f"Remote LLM configured: {LLM_MODEL} @ {LLM_API_URL}")
+    elif os.getenv("LLM_MODEL_PATH"):
         _get_model()
     if os.getenv("RERANKER_MODEL_PATH"):
         _get_reranker()

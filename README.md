@@ -11,7 +11,7 @@ Graph-augmented semantic search for academic literature
 - 🧮 Track paper ingestion state in SQLite index
 - 📦 Index embeddings into Qdrant
 - 🔍 Search Qdrant with BGE-M3 embeddings
-- 🤖 LLM-powered RAG answers (Gemma 3 4B)
+- 🤖 LLM-powered RAG answers (Gemma 3 12B, remote API)
 - 🎯 Cross-encoder reranking (Jina Reranker V3)
 - 🔌 MCP server for AI agent integration (Claude Desktop, etc.)
 - 🧩 Merge vector + (planned) graph hits
@@ -21,13 +21,13 @@ Graph-augmented semantic search for academic literature
 
 ## Models
 
-Three models loaded at server startup:
+Only reranker loaded at server startup (embeddings + LLM via remote API):
 
-| Model | Purpose | Size |
-|-------|---------|------|
-| BGE-M3 | Text embeddings (1024-dim) | ~560M |
-| Gemma 3 4B IT | RAG answer generation | 4.3B |
-| Jina Reranker V3 | Cross-encoder reranking | 0.6B |
+| Model | Purpose | Size | Where |
+|-------|---------|------|-------|
+| BGE-M3 | Text embeddings (1024-dim) | ~560M | Remote API (`172.31.61.121:1234`) |
+| Gemma 3 12B | RAG answer generation | 12B | Remote API (`172.31.61.121:1234`) |
+| Jina Reranker V3 | Cross-encoder reranking | 0.6B | Local filesystem |
 
 ## Usage
 
@@ -74,12 +74,17 @@ poe test
 QDRANT_HOST=localhost
 QDRANT_PORT=6333
 REDIS_URL=redis://localhost:6379/0
-EMBEDDING_MODEL_PATH=/path/to/bge-m3
+EMBEDDING_API_URL=http://172.31.61.121:1234/v1
+EMBEDDING_MODEL=text-embedding-bge-m3
 EMBEDDING_DIM=1024
-LLM_MODEL_PATH=/path/to/gemma-3-4b-it
+LLM_API_URL=http://172.31.61.121:1234/v1
+LLM_MODEL=google/gemma-3-12b
 RERANKER_MODEL_PATH=/path/to/jina-reranker-v3
 MCP_PORT=8888
 ```
+
+Embeddings + LLM served by remote API (`llama-server` / LM Studio on `172.31.61.121:1234`).
+Switch to local: comment `*_API_URL`/`*_MODEL`, uncomment `*_MODEL_PATH`.
 
 ## Diagram
 
@@ -140,8 +145,9 @@ flowchart TD
 Stack highlights:
 
 - Backend: FastAPI + Pydantic + uv
-- LLM/Reranker: HuggingFace Transformers (Gemma 3 + Jina V3)
-- Embeddings: Sentence-Transformers (BGE-M3)
+- LLM: llama-server remote API (Google Gemma 3 12B)
+- Reranker: HuggingFace Transformers (Jina Reranker V3, local)
+- Embeddings: Remote API (`text-embedding-bge-m3` via llama-server)
 - MCP: FastMCP (streamable-http)
 - Queue: Redis (Upstash or local)
 - Vector DB: Qdrant
