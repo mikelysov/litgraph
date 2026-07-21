@@ -182,3 +182,4 @@ cython_debug/
 # Qdrant runtime files
 aliases/data.json
 raft_state.json
+collections/

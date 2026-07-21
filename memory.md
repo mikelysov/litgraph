@@ -11,7 +11,7 @@ To switch back to local: uncomment `EMBEDDING_MODEL_PATH`, comment `EMBEDDING_AP
 ## LLM backend: remote API
 
 Using `llama-server` on `172.31.61.121:1234` (host machine in local network).
-Model: `google/gemma-3-12b` (12B params).
+Model: `qwen3.5-4b`.
 Switched from local Gemma 3 4B IT to remote Gemma 3 12B 2026-07-14.
 
 To switch back to local: comment `LLM_API_URL`/`LLM_MODEL`, uncomment `LLM_MODEL_PATH`.

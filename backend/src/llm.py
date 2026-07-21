@@ -31,7 +31,11 @@ def _remote_generate(
     )
     response.raise_for_status()
     data = response.json()
-    content = data["choices"][0]["message"]["content"]
+    msg = data["choices"][0]["message"]
+    content = msg.get("content", "")
+    # Qwen 3.5 puts output in reasoning_content when content is empty
+    if not content.strip() and msg.get("reasoning_content"):
+        content = msg["reasoning_content"]
     # Strip thinking section and special tokens
     content = re.sub(r'<\|im_end\|>|<\|im_start\|>|</?think>', '', content)
     return content.strip()
@@ -178,7 +182,7 @@ def generate_rag_answer(
         },
     ]
 
-    raw = generate(messages, max_new_tokens=2048)
+    raw = generate(messages, max_new_tokens=4096)
     try:
         return _parse_json(raw)
     except ValueError as e:

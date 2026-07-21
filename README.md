@@ -78,7 +78,7 @@ EMBEDDING_API_URL=http://172.31.61.121:1234/v1
 EMBEDDING_MODEL=text-embedding-bge-m3
 EMBEDDING_DIM=1024
 LLM_API_URL=http://172.31.61.121:1234/v1
-LLM_MODEL=google/gemma-3-12b
+LLM_MODEL=qwen3.5-4b
 RERANKER_MODEL_PATH=/path/to/jina-reranker-v3
 MCP_PORT=8888
 ```

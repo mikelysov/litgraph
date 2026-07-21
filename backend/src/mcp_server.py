@@ -10,9 +10,12 @@ from httpx import Client, HTTPStatusError
 load_dotenv()
 
 API_URL = os.getenv("LITGRAPH_API_URL", "http://localhost:8889/api")
+QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT = os.getenv("QDRANT_PORT", "6333")
 _http = Client(base_url=API_URL, timeout=120.0)
+_qdrant = Client(base_url=f"http://{QDRANT_HOST}:{QDRANT_PORT}", timeout=30.0)
 
-mcp = FastMCP("Litgraph")
+mcp = FastMCP("Litgraph", json_response=True)
 
 
 @mcp.tool()
@@ -98,6 +101,28 @@ def ingest_pdf(file_path: str) -> str:
         f"Ingested {paper.id}: {paper.title[:60]}... "
         f"OK, pages={len(reader.pages)}, text_len={len(pdf_text)}"
     )
+
+
+@mcp.tool()
+def get_paper(paper_id: str) -> str:
+    """Fetch full paper details (title, authors, abstract) by arXiv ID."""
+    try:
+        resp = _qdrant.post(
+            "/collections/papers/points/scroll",
+            json={"filter": {"must": [{"key": "id", "match": {"value": paper_id}}]}, "limit": 1},
+        )
+        resp.raise_for_status()
+        points = resp.json().get("result", {}).get("points", [])
+        if not points:
+            return f"Paper {paper_id} not found."
+        p = points[0]["payload"]
+        return json.dumps(
+            {"id": p["id"], "title": p["title"], "abstract": p.get("abstract", "")},
+            ensure_ascii=False,
+            indent=2,
+        )
+    except Exception as e:
+        return f"Error fetching paper: {e}"
 
 
 @mcp.tool()

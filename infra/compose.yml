@@ -32,7 +32,7 @@ services:
       - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
       - EMBEDDING_MODEL=text-embedding-bge-m3
       - LLM_API_URL=http://172.31.61.121:1234/v1
-      - LLM_MODEL=google/gemma-3-12b
+      - LLM_MODEL=qwen3.5-4b@q4_k_xl
       - RERANKER_MODEL_PATH=/models/jina-reranker-v3
     depends_on:
       qdrant:
@@ -40,7 +40,7 @@ services:
       redis:
         condition: service_started
     command: ["uv", "run", "poe", "server"]
-    ports: ["8889:8889"]
+    ports: ["8889:8888"]
     profiles: ["app"]
 
   worker:
@@ -59,7 +59,7 @@ services:
       - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
       - EMBEDDING_MODEL=text-embedding-bge-m3
       - LLM_API_URL=http://172.31.61.121:1234/v1
-      - LLM_MODEL=google/gemma-3-12b
+      - LLM_MODEL=qwen3.5-4b@q4_k_xl
       - RERANKER_MODEL_PATH=/models/jina-reranker-v3
     depends_on:
       qdrant:
@@ -101,11 +101,12 @@ services:
       - ./qdrant/.env
       - ./app/.env
     environment:
+      - LITGRAPH_API_URL=http://api:8888/api
       - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
       - EMBEDDING_MODEL=text-embedding-bge-m3
       - EMBEDDING_DIM=1024
       - LLM_API_URL=http://172.31.61.121:1234/v1
-      - LLM_MODEL=google/gemma-3-12b
+      - LLM_MODEL=qwen3.5-4b@q4_k_xl
       - RERANKER_MODEL_PATH=/models/jina-reranker-v3
     depends_on:
       qdrant:

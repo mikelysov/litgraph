@@ -17,7 +17,7 @@ Services:
 ## Key Configuration
 
 Embeddings: remote API `http://172.31.61.121:1234/v1`, model `text-embedding-bge-m3`.
-LLM: remote API `http://172.31.61.121:1234/v1`, model `google/gemma-3-12b`.
+LLM: remote API `http://172.31.61.121:1234/v1`, model `qwen3.5-4b`.
 Reranker: local model via filesystem (`/mnt/d/colab/llms/jina-reranker-v3`).
 
 Env files:
