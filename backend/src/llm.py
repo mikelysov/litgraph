@@ -284,7 +284,12 @@ def rerank(
 
     Returns:
         Same documents sorted by relevance score descending, with 'score' added.
+        If RERANKER_MODEL_PATH unset, returns first top_k unchanged.
     """
+    if not os.getenv("RERANKER_MODEL_PATH"):
+        logger.debug("RERANKER_MODEL_PATH unset — skipping rerank")
+        return list(documents[:top_k])
+
     model = _get_reranker()
 
     # Build text list: title + abstract for each doc

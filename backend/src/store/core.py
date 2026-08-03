@@ -4,12 +4,12 @@ from src.store.graph import get_graph_store, MockStore
 from src.store.vector import get_vector_store
 
 
-def search(query: str, expand_hops: int = 1) -> list[SearchResult]:
+def search(query: str, expand_hops: int = 1, top_k: int = 5) -> list[SearchResult]:
     vector = get_vector_store()
     graph = get_graph_store()
 
     embedding = embed_query(query)
-    top_results = vector.search(embedding)
+    top_results = vector.search(embedding, top_k=top_k)
 
     # Skip enrichment if graph is mock (no graph backend configured)
     if isinstance(graph, MockStore):

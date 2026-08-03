@@ -13,17 +13,35 @@ def enqueue_papers(papers: list[Paper]) -> list[PaperState]:
     redis_conn: Redis = get_redis_conn()
     index = get_paper_index()
     states: list[PaperState] = []
+    to_index: list[PaperState] = []
 
     for paper in papers:
+        existing: PaperState | None = index.get(paper.id)
+        if existing is not None and existing.status in (
+            PaperStatus.EMBEDDED,
+            PaperStatus.QUEUED,
+        ):
+            logger.debug(f"Skipping paper {paper.id} - already {existing.status.value}.")
+            states.append(existing)
+            continue
+
+        if redis_conn.sismember(QUEUE_SET, paper.id):
+            logger.debug(f"Skipping paper {paper.id} - already in Redis set.")
+            state = PaperState(id=paper.id, status=PaperStatus.QUEUED, in_graph=False)
+            states.append(state)
+            continue
+
         logger.debug(f"Enqueuing paper {paper.id} to Redis.")
         redis_conn.rpush(QUEUE_LIST, paper.model_dump_json())
-        redis_conn.sadd(QUEUE_SET, paper.url)
+        redis_conn.sadd(QUEUE_SET, paper.id)
 
         state = PaperState(id=paper.id, status=PaperStatus.QUEUED, in_graph=False)
         states.append(state)
+        to_index.append(state)
 
-    index.set_many(states)
-    logger.info(f"Enqueued {len(papers)} papers to Redis and updated PaperIndex.")
+    if to_index:
+        index.set_many(to_index)
+        logger.info(f"Enqueued {len(to_index)} papers to Redis and updated PaperIndex.")
     return states
 
 
@@ -48,14 +66,14 @@ def enqueue_missing(papers: list[Paper], redis_conn: Redis) -> None:
             continue
 
         # Check Redis set for already-queued status
-        if redis_conn.sismember(QUEUE_SET, paper.url):
+        if redis_conn.sismember(QUEUE_SET, paper.id):
             logger.debug(f"Skipping paper {paper.id} - already in Redis set.")
             continue
 
         # Add to Redis queue and set
         logger.debug(f"Enqueuing paper {paper.id} to Redis.")
         redis_conn.rpush(QUEUE_LIST, paper.model_dump_json())
-        redis_conn.sadd(QUEUE_SET, paper.url)
+        redis_conn.sadd(QUEUE_SET, paper.id)
 
         # Track for PaperIndex update
         to_queue.append(

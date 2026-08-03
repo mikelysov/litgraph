@@ -13,6 +13,7 @@ from upstash_redis import Redis
 
 from src.embedder import embed_papers
 from src.models import Paper, PaperState, PaperStatus
+from src.queuing import QUEUE_SET
 from src.store import get_paper_index, get_vector_store
 from src.store.redis import get_redis_conn
 
@@ -55,11 +56,23 @@ def process_batch(papers: list[Paper]) -> None:
     vector_store = get_vector_store()
     paper_index = get_paper_index()
 
+    redis_conn = get_redis_conn()
+
     # Embed papers
     try:
         vectors: NDArray[np.float32] = embed_papers(papers)
     except Exception as e:
         logger.error(f"Failed to embed batch: {e}")
+        for paper in papers:
+            paper_index.set(
+                PaperState(
+                    id=paper.id,
+                    status=PaperStatus.ERROR,
+                    in_graph=False,
+                    error_message=str(e),
+                )
+            )
+            redis_conn.srem(QUEUE_SET, paper.id)
         return
 
     successes = 0
@@ -75,9 +88,19 @@ def process_batch(papers: list[Paper]) -> None:
                     in_graph=False,
                 )
             )
+            redis_conn.srem(QUEUE_SET, paper.id)
             successes += 1
         except Exception as e:
             logger.warning(f"Failed to index paper {paper.id}: {e}")
+            paper_index.set(
+                PaperState(
+                    id=paper.id,
+                    status=PaperStatus.ERROR,
+                    in_graph=False,
+                    error_message=str(e),
+                )
+            )
+            redis_conn.srem(QUEUE_SET, paper.id)
 
     logger.info(f"Indexed {successes}/{len(papers)} papers")
 

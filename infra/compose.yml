@@ -102,6 +102,9 @@ services:
       - ./app/.env
     environment:
       - LITGRAPH_API_URL=http://api:8888/api
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8888
+      - INGEST_PDF_ROOT=/docs
       - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
       - EMBEDDING_MODEL=text-embedding-bge-m3
       - EMBEDDING_DIM=1024
@@ -109,6 +112,8 @@ services:
       - LLM_MODEL=qwen3.5-4b@q4_k_xl
       - RERANKER_MODEL_PATH=/models/jina-reranker-v3
     depends_on:
+      api:
+        condition: service_started
       qdrant:
         condition: service_started
       redis:

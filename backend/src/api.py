@@ -66,9 +66,12 @@ def status(paper_id: list[str] = Query(...)) -> list[dict[str, str | bool]]:
 
 
 @router.get("/search", response_model=SearchResponse)
-def search(query: str = Query(..., min_length=1)):
+def search(
+    query: str = Query(..., min_length=1),
+    top_k: int = Query(5, ge=1, le=50),
+):
     logger.debug(f"Received search query: {query}")
-    results = vector_search(query, expand_hops=1)
+    results = vector_search(query, expand_hops=1, top_k=top_k)
     nodes = [
         PaperNode(
             id=r.id,
@@ -94,9 +97,17 @@ def search(query: str = Query(..., min_length=1)):
 
 
 @router.get("/ask")
-def ask(query: str = Query(..., min_length=1), top_k: int = Query(5)):
+def ask(
+    query: str = Query(..., min_length=1),
+    top_k: int = Query(5, ge=1, le=50),
+):
     logger.info(f"Ask: {query[:80]}")
-    raw_results = vector_search(query)
+    try:
+        raw_results = vector_search(query, top_k=max(top_k, 20))
+    except Exception as e:
+        logger.error(f"Search failed for ask: {e}")
+        raise HTTPException(status_code=502, detail=f"Search failed: {e}") from e
+
     context = [
         {"id": r.id, "title": r.title, "abstract": r.abstract}
         for r in raw_results[:20]
@@ -104,8 +115,17 @@ def ask(query: str = Query(..., min_length=1), top_k: int = Query(5)):
     if not context:
         return {"answer": "No relevant papers found.", "sources": [], "confidence": "low"}
 
-    context = rerank(query, context, top_k=top_k)
-    answer = generate_rag_answer(query, context)
+    try:
+        context = rerank(query, context, top_k=top_k)
+    except Exception as e:
+        logger.warning(f"Rerank failed, using vector order: {e}")
+        context = context[:top_k]
+
+    try:
+        answer = generate_rag_answer(query, context)
+    except Exception as e:
+        logger.error(f"RAG generate failed: {e}")
+        raise HTTPException(status_code=502, detail=f"LLM failed: {e}") from e
 
     raw_sources = answer.get("sources", [])
     if raw_sources and isinstance(raw_sources[0], (int, float)):

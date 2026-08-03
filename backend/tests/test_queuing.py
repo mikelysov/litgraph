@@ -122,8 +122,8 @@ def test_enqueue_missing_already_in_redis(
     mock_paper_index: MagicMock,
     sample_papers: list[Paper],
 ):
-    # Mock Redis to indicate some papers are already in the set
-    mock_redis.sismember.side_effect = lambda queue_set, url: url == "http://example.com/2"
+    # Mock Redis to indicate some papers are already in the set (keyed by paper id)
+    mock_redis.sismember.side_effect = lambda queue_set, paper_id: paper_id == "2"
 
     # Call the function
     enqueue_missing(sample_papers, mock_redis)

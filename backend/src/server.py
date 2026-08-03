@@ -29,9 +29,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.debug(" | ".join(parts))
 
     if not all(health.values()):
-        logger.error("Health check failed. Exiting...")
-        raise RuntimeError("Health check failed.")
-    logger.info("Health check passed.")
+        failed = [k for k, v in health.items() if not v]
+        logger.error(f"Health check failed for: {failed}. Continuing boot.")
+    else:
+        logger.info("Health check passed.")
     logger.info("Preloading models...")
     preload_embedder()
     preload_llm()

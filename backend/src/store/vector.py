@@ -37,7 +37,7 @@ class QdrantVectorStore(VectorStore):
     def ensure_collection(self) -> None:
         """
         Ensure the collection exists with correct vector dimension.
-        Recreates if dimension doesn't match EMBEDDING_DIM.
+        Raises if existing collection dimension mismatches EMBEDDING_DIM.
         """
         existing: list[str] = [
             c.name for c in self.client.get_collections().collections
@@ -49,12 +49,10 @@ class QdrantVectorStore(VectorStore):
             info = self.client.get_collection(COLLECTION_NAME)
             current_dim = info.config.params.vectors.size
             if current_dim != VECTOR_DIM:
-                logger.warning(
+                raise RuntimeError(
                     f"Collection '{COLLECTION_NAME}' dim {current_dim} != expected {VECTOR_DIM}. "
-                    "Recreating..."
+                    "Delete collection manually if recreate intended."
                 )
-                self.client.delete_collection(COLLECTION_NAME)
-                existing.remove(COLLECTION_NAME)
         if COLLECTION_NAME not in existing:
             logger.info(f"Creating collection '{COLLECTION_NAME}' (dim={VECTOR_DIM})...")
             self.client.recreate_collection(
