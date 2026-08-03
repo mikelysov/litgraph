@@ -14,6 +14,8 @@ Services:
 - Qdrant UI → http://localhost:6333/dashboard
 - Redis → localhost:6379
 
+Venv: `backend/.venv` (managed by uv; `uv run` из `backend/`).
+
 ## Key Configuration
 
 Embeddings: remote API `http://172.31.61.121:1234/v1`, model `text-embedding-bge-m3`.
@@ -31,7 +33,8 @@ Backend: FastAPI + Pydantic + uv
 LLM: llama-server remote API (Google Gemma 3 12B)
 Reranker: HuggingFace Transformers (Jina Reranker V3, local)
 Embeddings: llama-server remote API (BGE-M3, 1024-dim)
-MCP: FastMCP (streamable-http)
+MCP: mcp SDK 2.0.0 (MCPServer, streamable-http; proto 2026-07-28, handshake 2025-11-25)
+MCP client: opencode (global `~/.config/opencode/opencode.json`) → http://localhost:8888/mcp
 Queue: Redis
 Vector DB: Qdrant
 Frontend: React + Vite + Tailwind
