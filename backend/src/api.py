@@ -8,6 +8,7 @@ from src.models import (
     PaperNode,
     PaperState,
     GraphData,
+    GraphEdge,
     SearchResponse,
 )
 from src.pipeline import run_pipeline
@@ -90,9 +91,25 @@ def search(
         PaperNode(id=pid, title="", authors=[])
         for pid in all_ids
     ]
+    edges: list[GraphEdge] = []
+    try:
+        from src.store.graph import MockStore, get_graph_store
+        g = get_graph_store()
+        if not isinstance(g, MockStore):
+            for source, target, weight in g.get_edges(list(all_ids)):
+                edges.append(
+                    GraphEdge(
+                        source=source,
+                        target=target,
+                        weight=weight,
+                        type="shared_entity",
+                    )
+                )
+    except Exception as e:
+        logger.warning(f"Graph edges failed: {e}")
     return SearchResponse(
         results=nodes,
-        graph=GraphData(nodes=graph_nodes, edges=[]),
+        graph=GraphData(nodes=graph_nodes, edges=edges),
     )
 
 

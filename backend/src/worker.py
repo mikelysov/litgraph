@@ -12,9 +12,11 @@ from numpy.typing import NDArray
 from upstash_redis import Redis
 
 from src.embedder import embed_papers
+from src.llm import extract_entities
 from src.models import Paper, PaperState, PaperStatus
 from src.queuing import QUEUE_SET
 from src.store import get_paper_index, get_vector_store
+from src.store.graph import MockStore, get_graph_store
 from src.store.redis import get_redis_conn
 
 BATCH_SIZE = 8
@@ -55,6 +57,7 @@ def process_batch(papers: list[Paper]) -> None:
     # Get vector store and paper index
     vector_store = get_vector_store()
     paper_index = get_paper_index()
+    graph = get_graph_store()
 
     redis_conn = get_redis_conn()
 
@@ -81,11 +84,22 @@ def process_batch(papers: list[Paper]) -> None:
     for paper, vector in zip(papers, vectors):
         try:
             vector_store.index([paper], vector[np.newaxis, :])
+            # Extract entities and build Neo4j graph (skipped for MockStore)
+            if not isinstance(graph, MockStore):
+                try:
+                    entities = extract_entities(paper.abstract)
+                    graph.add_paper(paper, entities)
+                    in_graph = True
+                except Exception as e:
+                    logger.warning(f"Graph enrichment failed for {paper.id}: {e}")
+                    in_graph = False
+            else:
+                in_graph = False
             paper_index.set(
                 PaperState(
                     id=paper.id,
                     status=PaperStatus.EMBEDDED,
-                    in_graph=False,
+                    in_graph=in_graph,
                 )
             )
             redis_conn.srem(QUEUE_SET, paper.id)

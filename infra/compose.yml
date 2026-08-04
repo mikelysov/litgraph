@@ -2,6 +2,7 @@ name: litgraph-local
 
 volumes:
   frontend_node_modules:
+  litgraph_cache:
 
 services:
   qdrant:
@@ -24,13 +25,15 @@ services:
     working_dir: /app
     volumes:
       - ../backend:/app
+      - litgraph_cache:/cache
       - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
     env_file:
       - ./qdrant/.env
       - ./app/.env
     environment:
+      - LITGRAPH_CACHE=/cache/litgraph/paper_index.db
       - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
-      - EMBEDDING_MODEL=text-embedding-bge-m3
+      - EMBEDDING_MODEL=text-embedding-multilingual-e5-large-instruct
       - LLM_API_URL=http://172.31.61.121:1234/v1
       - LLM_MODEL=qwen3.5-4b@q4_k_xl
       - RERANKER_MODEL_PATH=/models/jina-reranker-v3
@@ -51,13 +54,15 @@ services:
     working_dir: /app
     volumes:
       - ../backend:/app
+      - litgraph_cache:/cache
       - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
     env_file:
       - ./qdrant/.env
       - ./app/.env
     environment:
+      - LITGRAPH_CACHE=/cache/litgraph/paper_index.db
       - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
-      - EMBEDDING_MODEL=text-embedding-bge-m3
+      - EMBEDDING_MODEL=text-embedding-multilingual-e5-large-instruct
       - LLM_API_URL=http://172.31.61.121:1234/v1
       - LLM_MODEL=qwen3.5-4b@q4_k_xl
       - RERANKER_MODEL_PATH=/models/jina-reranker-v3
@@ -96,17 +101,19 @@ services:
     volumes:
       - ../backend:/app
       - ../docs:/docs:ro
+      - litgraph_cache:/cache
       - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
     env_file:
       - ./qdrant/.env
       - ./app/.env
     environment:
       - LITGRAPH_API_URL=http://api:8888/api
+      - LITGRAPH_CACHE=/cache/litgraph/paper_index.db
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8888
       - INGEST_PDF_ROOT=/docs
       - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
-      - EMBEDDING_MODEL=text-embedding-bge-m3
+      - EMBEDDING_MODEL=text-embedding-multilingual-e5-large-instruct
       - EMBEDDING_DIM=1024
       - LLM_API_URL=http://172.31.61.121:1234/v1
       - LLM_MODEL=qwen3.5-4b@q4_k_xl

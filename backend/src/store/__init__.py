@@ -21,6 +21,15 @@ def is_redis_available() -> bool:
         return False
 
 
+def is_graph_available() -> bool:
+    try:
+        from .graph import get_graph_store, MockStore
+        g = get_graph_store()
+        return not isinstance(g, MockStore) and g.is_healthy()
+    except Exception:
+        return False
+
+
 def health_check() -> dict[str, bool]:
     """
     Check the health of the paper index and vector store.
@@ -30,4 +39,5 @@ def health_check() -> dict[str, bool]:
         "paper_index": get_paper_index().is_healthy(),
         "vector_store": get_vector_store().is_healthy(),
         "redis": is_redis_available(),
+        "graph": is_graph_available(),
     }

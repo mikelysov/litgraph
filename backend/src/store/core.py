@@ -15,10 +15,28 @@ def search(query: str, expand_hops: int = 1, top_k: int = 5) -> list[SearchResul
     if isinstance(graph, MockStore):
         return top_results
 
-    all_ids = {r.id for r in top_results}
+    # Enrich top results with graph-derived related papers (Qdrant remains source of truth)
+    enriched: list[SearchResult] = []
+    seen: set[str] = set()
     for r in top_results:
-        related = graph.get_related_ids(r.id)
-        all_ids.update(related)
-
-    enriched = graph.get_papers_by_ids(list(all_ids))
+        seen.add(r.id)
+        enriched.append(r)
+        for hop in range(expand_hops):
+            if hop == 0:
+                related = graph.get_related_ids(r.id)
+                related_meta = {p.id: p for p in graph.get_papers_by_ids(related)}
+                for rid in related:
+                    if rid in seen:
+                        continue
+                    seen.add(rid)
+                    meta = related_meta.get(rid)
+                    enriched.append(
+                        SearchResult(
+                            id=rid,
+                            title=meta.title if meta else "",
+                            authors=meta.authors if meta else [],
+                            score=0.0,
+                            related_ids=[r.id],
+                        )
+                    )
     return enriched
