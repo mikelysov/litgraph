@@ -21,8 +21,7 @@ CMD ["uv", "run", "poe", "server"]
 # Optional GPU stage
 FROM cpu AS gpu
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --force-reinstall torch \
-    --index-url https://download.pytorch.org/whl/cu121
+    uv pip install --python /opt/venv/bin/python accelerate
 
 ENV PYTHONUNBUFFERED=1
 CMD ["uv", "run", "poe", "server"]

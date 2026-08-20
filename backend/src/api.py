@@ -1,7 +1,9 @@
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
 
-from src.llm import generate_rag_answer, rerank
+from src.llm import generate_rag_answer_async, rerank
 from src.models import (
     IngestEvent,
     Paper,
@@ -20,9 +22,9 @@ router = APIRouter()
 
 
 @router.post("/ingest")
-def ingest(body: Paper) -> list[dict]:
+async def ingest(body: Paper) -> list[dict]:
     logger.info(f"Ingesting paper {body.id}: {body.title[:60]}...")
-    states = enqueue_papers([body])
+    states = await asyncio.to_thread(enqueue_papers, [body])
     return [s.model_dump() for s in states]
 
 
@@ -67,12 +69,12 @@ def status(paper_id: list[str] = Query(...)) -> list[dict[str, str | bool]]:
 
 
 @router.get("/search", response_model=SearchResponse)
-def search(
+async def search(
     query: str = Query(..., min_length=1),
     top_k: int = Query(5, ge=1, le=50),
 ):
     logger.debug(f"Received search query: {query}")
-    results = vector_search(query, expand_hops=1, top_k=top_k)
+    results = await asyncio.to_thread(vector_search, query, 1, top_k)
     nodes = [
         PaperNode(
             id=r.id,
@@ -94,17 +96,23 @@ def search(
     edges: list[GraphEdge] = []
     try:
         from src.store.graph import MockStore, get_graph_store
-        g = get_graph_store()
-        if not isinstance(g, MockStore):
-            for source, target, weight in g.get_edges(list(all_ids)):
-                edges.append(
-                    GraphEdge(
-                        source=source,
-                        target=target,
-                        weight=weight,
-                        type="shared_entity",
+
+        def _collect_edges() -> list[GraphEdge]:
+            g = get_graph_store()
+            out: list[GraphEdge] = []
+            if not isinstance(g, MockStore):
+                for source, target, weight in g.get_edges(list(all_ids)):
+                    out.append(
+                        GraphEdge(
+                            source=source,
+                            target=target,
+                            weight=weight,
+                            type="shared_entity",
+                        )
                     )
-                )
+            return out
+
+        edges = await asyncio.to_thread(_collect_edges)
     except Exception as e:
         logger.warning(f"Graph edges failed: {e}")
     return SearchResponse(
@@ -114,13 +122,13 @@ def search(
 
 
 @router.get("/ask")
-def ask(
+async def ask(
     query: str = Query(..., min_length=1),
     top_k: int = Query(5, ge=1, le=50),
 ):
     logger.info(f"Ask: {query[:80]}")
     try:
-        raw_results = vector_search(query, top_k=max(top_k, 20))
+        raw_results = await asyncio.to_thread(vector_search, query, 1, max(top_k, 20))
     except Exception as e:
         logger.error(f"Search failed for ask: {e}")
         raise HTTPException(status_code=502, detail=f"Search failed: {e}") from e
@@ -133,13 +141,13 @@ def ask(
         return {"answer": "No relevant papers found.", "sources": [], "confidence": "low"}
 
     try:
-        context = rerank(query, context, top_k=top_k)
+        context = await asyncio.to_thread(rerank, query, context, top_k)
     except Exception as e:
         logger.warning(f"Rerank failed, using vector order: {e}")
         context = context[:top_k]
 
     try:
-        answer = generate_rag_answer(query, context)
+        answer = await generate_rag_answer_async(query, context)
     except Exception as e:
         logger.error(f"RAG generate failed: {e}")
         raise HTTPException(status_code=502, detail=f"LLM failed: {e}") from e

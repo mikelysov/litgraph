@@ -4,7 +4,8 @@ This script continuously fetches batches of papers from a Redis queue,
 embeds them using a pre-trained model, and updates the vector store and paper index.
 """
 
-from time import sleep, time
+from concurrent.futures import ThreadPoolExecutor
+from time import time
 
 import numpy as np
 from loguru import logger
@@ -20,20 +21,28 @@ from src.store.graph import MockStore, get_graph_store
 from src.store.redis import get_redis_conn
 
 BATCH_SIZE = 8
-SLEEP_INTERVAL = 1.0  # seconds
+IDLE_TIMEOUT = 5  # seconds; idle wait for first item
+FILL_TIMEOUT = 1  # seconds; batch-fill wait for subsequent items
 
 
-def get_batch(redis_conn: Redis, max_items: int, timeout: int = 5) -> list[Paper]:
+def get_batch(
+    redis_conn: Redis,
+    max_items: int,
+    idle_timeout: int = IDLE_TIMEOUT,
+    fill_timeout: int = FILL_TIMEOUT,
+) -> list[Paper]:
     """
     Fetch up to max_items papers from Redis using blocking pop.
-    Waits up to `timeout` seconds for each item before giving up.
+    The first item waits up to `idle_timeout` seconds (idle wait);
+    subsequent items wait up to `fill_timeout` seconds to fill the batch.
     """
     batch: list[Paper] = []
-    for _ in range(max_items):
+    for i in range(max_items):
+        timeout = idle_timeout if i == 0 else fill_timeout
         logger.debug("Waiting for paper in queue...")
         raw = redis_conn.blpop("paper_queue", timeout=timeout)
         if raw is None:
-            break  # no new item in `timeout` seconds
+            break  # no new item within the timeout
         try:
             _, value = raw  # (queue name, payload)
             paper = Paper.model_validate_json(value)
@@ -80,19 +89,30 @@ def process_batch(papers: list[Paper]) -> None:
 
     successes = 0
 
+    # Extract entities in parallel (skipped for MockStore)
+    entities_by_id: dict[str, dict] = {}
+    if not isinstance(graph, MockStore):
+        def _extract(paper: Paper) -> tuple[str, dict | None]:
+            try:
+                return paper.id, extract_entities(paper.abstract)
+            except Exception as e:
+                logger.warning(f"Graph enrichment failed for {paper.id}: {e}")
+                return paper.id, None
+
+        with ThreadPoolExecutor(max_workers=min(BATCH_SIZE, len(papers))) as executor:
+            for pid, entities in executor.map(_extract, papers):
+                if entities is not None:
+                    entities_by_id[pid] = entities
+
     # Index papers in vector store and update paper index
     for paper, vector in zip(papers, vectors):
         try:
             vector_store.index([paper], vector[np.newaxis, :])
-            # Extract entities and build Neo4j graph (skipped for MockStore)
-            if not isinstance(graph, MockStore):
-                try:
-                    entities = extract_entities(paper.abstract)
-                    graph.add_paper(paper, entities)
-                    in_graph = True
-                except Exception as e:
-                    logger.warning(f"Graph enrichment failed for {paper.id}: {e}")
-                    in_graph = False
+            # Add to graph only if entity extraction succeeded (skipped for MockStore)
+            entities = entities_by_id.get(paper.id)
+            if entities is not None:
+                graph.add_paper(paper, entities)
+                in_graph = True
             else:
                 in_graph = False
             paper_index.set(
@@ -127,20 +147,15 @@ def run_worker_loop() -> None:
     logger.info("Starting worker loop...")
     redis_conn: Redis = get_redis_conn()
 
-    backoff = SLEEP_INTERVAL
-
     while True:
         start_time = time()
 
         papers = get_batch(redis_conn, BATCH_SIZE)
 
         if not papers:
-            logger.debug(f"No papers found, sleeping for {backoff:.1f}s...")
-            sleep(backoff)
-            backoff = min(backoff * 2, 60.0)  # Cap at 1 min
+            # blpop already blocked for `idle_timeout`; loop back immediately
             continue
 
-        backoff = SLEEP_INTERVAL  # reset backoff
         process_batch(papers)
 
         duration = time() - start_time

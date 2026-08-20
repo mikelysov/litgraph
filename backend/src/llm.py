@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -7,6 +8,7 @@ import httpx
 from loguru import logger
 
 from src.config import LLM_API_URL, LLM_MODEL
+from src.http_client import get_async_client
 
 _LOCAL_LLM: Any = None  # (model, tokenizer)
 
@@ -19,6 +21,36 @@ def _remote_generate(
 ) -> str:
     """Generate text via remote chat completions API (OpenAI-compatible)."""
     response = httpx.post(
+        f"{LLM_API_URL}/chat/completions",
+        json={
+            "model": LLM_MODEL,
+            "messages": messages,
+            "max_tokens": max_new_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        },
+        timeout=120.0,
+    )
+    response.raise_for_status()
+    data = response.json()
+    msg = data["choices"][0]["message"]
+    content = msg.get("content", "")
+    # Qwen 3.5 puts output in reasoning_content when content is empty
+    if not content.strip() and msg.get("reasoning_content"):
+        content = msg["reasoning_content"]
+    # Strip thinking section and special tokens
+    content = re.sub(r'<\|im_end\|>|<\|im_start\|>|</?think>', '', content)
+    return content.strip()
+
+
+async def _remote_generate_async(
+    messages: list[dict[str, str]],
+    max_new_tokens: int = 1024,
+    temperature: float = 0.6,
+    top_p: float = 0.95,
+) -> str:
+    """Generate text via remote chat completions API (async, pooled client)."""
+    response = await get_async_client().post(
         f"{LLM_API_URL}/chat/completions",
         json={
             "model": LLM_MODEL,
@@ -121,6 +153,18 @@ def generate(
     return response.strip()
 
 
+async def generate_async(
+    messages: list[dict[str, str]],
+    max_new_tokens: int = 1024,
+    temperature: float = 0.6,
+    top_p: float = 0.95,
+) -> str:
+    """Async variant of generate: remote API via pooled client, local model in thread."""
+    if LLM_API_URL:
+        return await _remote_generate_async(messages, max_new_tokens, temperature, top_p)
+    return await asyncio.to_thread(generate, messages, max_new_tokens, temperature, top_p)
+
+
 def _parse_json(text: str) -> dict:
     """Extract JSON object from model output."""
     # Strip thinking tags if present
@@ -152,13 +196,7 @@ def _parse_json(text: str) -> dict:
     raise ValueError(f"Cannot parse JSON from: {text[:200]}")
 
 
-def generate_rag_answer(
-    query: str, context: list[dict[str, str]], top_k: int = 5
-) -> dict:
-    """Generate structured answer from search results.
-
-    Returns dict with: answer, sources (list), confidence (str).
-    """
+def _build_rag_messages(query: str, context: list[dict[str, str]], top_k: int = 5) -> list[dict[str, str]]:
     docs = context[:top_k]
     context_text = "\n\n".join(
         f"[{i+1}] {d.get('title', 'Untitled')}\n{d.get('abstract', '')[:2000]}"
@@ -174,7 +212,7 @@ def generate_rag_answer(
         "Если ответа нет — confidence: low."
     )
 
-    messages = [
+    return [
         {"role": "system", "content": system_prompt},
         {
             "role": "user",
@@ -182,7 +220,8 @@ def generate_rag_answer(
         },
     ]
 
-    raw = generate(messages, max_new_tokens=4096)
+
+def _finalize_rag_answer(raw: str) -> dict:
     try:
         return _parse_json(raw)
     except ValueError as e:
@@ -193,6 +232,29 @@ def generate_rag_answer(
             "confidence": "low",
             "_parse_error": str(e),
         }
+
+
+def generate_rag_answer(
+    query: str, context: list[dict[str, str]], top_k: int = 5
+) -> dict:
+    """Generate structured answer from search results.
+
+    Returns dict with: answer, sources (list), confidence (str).
+    """
+    messages = _build_rag_messages(query, context, top_k)
+    max_ask_tokens = int(os.getenv("LLM_MAX_ASK_TOKENS", "1024"))
+    raw = generate(messages, max_new_tokens=max_ask_tokens)
+    return _finalize_rag_answer(raw)
+
+
+async def generate_rag_answer_async(
+    query: str, context: list[dict[str, str]], top_k: int = 5
+) -> dict:
+    """Async variant of generate_rag_answer."""
+    messages = _build_rag_messages(query, context, top_k)
+    max_ask_tokens = int(os.getenv("LLM_MAX_ASK_TOKENS", "1024"))
+    raw = await generate_async(messages, max_new_tokens=max_ask_tokens)
+    return _finalize_rag_answer(raw)
 
 
 def extract_entities(text: str) -> dict:

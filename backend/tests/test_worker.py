@@ -35,7 +35,7 @@ def test_get_batch_valid_papers(mock_redis, sample_paper):
 
 
 def test_get_batch_with_invalid_paper(mock_redis):
-    mock_redis.lpop.side_effect = ['{"bad": "data"}', None]
+    mock_redis.blpop.side_effect = [("paper_queue", '{"bad": "data"}'), None]
 
     batch = get_batch(mock_redis, max_items=2)
 
@@ -74,3 +74,41 @@ def test_process_batch_happy_path(
 def test_process_batch_empty():
     # Should do nothing and not crash
     assert process_batch([]) is None
+
+
+def test_process_batch_parallel_extract():
+    import threading
+
+    import src.worker as worker_module
+
+    papers = [
+        Paper(id="p1", title="T1", abstract="A1", authors=["X"], url=""),
+        Paper(id="p2", title="T2", abstract="A2", authors=["Y"], url=""),
+    ]
+    barrier = threading.Barrier(2, timeout=5)
+
+    def slow_extract(text):
+        barrier.wait(timeout=5)  # both calls must arrive concurrently
+        return {"methods": [], "datasets": [], "tasks": [], "models": []}
+
+    with (
+        patch.object(worker_module, "embed_papers") as mock_embed,
+        patch.object(worker_module, "get_vector_store") as mock_get_store,
+        patch.object(worker_module, "get_paper_index") as mock_get_index,
+        patch.object(worker_module, "get_graph_store") as mock_get_graph,
+        patch.object(worker_module, "get_redis_conn") as mock_get_redis,
+        patch.object(worker_module, "extract_entities", side_effect=slow_extract) as mock_extract,
+    ):
+        mock_embed.return_value = np.random.rand(2, 384).astype(np.float32)
+        mock_get_store.return_value = MagicMock()
+        index = MagicMock()
+        mock_get_index.return_value = index
+        mock_get_graph.return_value = MagicMock()  # not a MockStore
+        mock_get_redis.return_value = MagicMock()
+
+        process_batch(papers)
+
+    assert mock_extract.call_count == 2
+    # in_graph=True for both => both extractions succeeded concurrently
+    calls = [c.args[0] for c in index.set.call_args_list]
+    assert all(c.in_graph for c in calls)

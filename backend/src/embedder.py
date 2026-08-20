@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import numpy as np
@@ -6,6 +7,7 @@ from numpy.typing import NDArray
 from sentence_transformers import SentenceTransformer
 
 from src.config import EMBEDDING_API_URL, EMBEDDING_MODEL
+from src.http_client import get_async_client
 from src.models import Paper
 
 _local_model: SentenceTransformer | None = None
@@ -23,6 +25,18 @@ def _get_device() -> str:
 
 def _remote_embed(texts: list[str]) -> NDArray[np.float32]:
     response = httpx.post(
+        f"{EMBEDDING_API_URL}/embeddings",
+        json={"model": EMBEDDING_MODEL, "input": texts},
+        timeout=60.0,
+    )
+    response.raise_for_status()
+    data = response.json()
+    embeddings = [item["embedding"] for item in data["data"]]
+    return np.array(embeddings, dtype=np.float32)
+
+
+async def _remote_embed_async(texts: list[str]) -> NDArray[np.float32]:
+    response = await get_async_client().post(
         f"{EMBEDDING_API_URL}/embeddings",
         json={"model": EMBEDDING_MODEL, "input": texts},
         timeout=60.0,
@@ -59,3 +73,9 @@ def embed_query(query: str) -> NDArray[np.float32]:
     if EMBEDDING_API_URL:
         return _remote_embed([query])
     return _local_embed([query])
+
+
+async def embed_query_async(query: str) -> NDArray[np.float32]:
+    if EMBEDDING_API_URL:
+        return await _remote_embed_async([query])
+    return await asyncio.to_thread(_local_embed, [query])

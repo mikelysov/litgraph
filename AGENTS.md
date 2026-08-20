@@ -3,8 +3,8 @@
 ## Setup
 
 ```bash
-make up-full        # Full stack (CPU)
-make up-full USE_GPU=1  # With GPU
+make up-full-dev    # Full stack (CPU)
+USE_GPU=1 make rebuild   # With GPU (rebuild + up)
 ```
 
 Services:
