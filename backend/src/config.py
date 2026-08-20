@@ -11,12 +11,14 @@ if not PAPER_INDEX_PATH.exists():
     PAPER_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 EMBEDDING_API_URL = os.getenv("EMBEDDING_API_URL", "")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-qwen3-embedding-4b@q8_0")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-multilingual-e5-large-instruct")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
 
 LLM_API_URL = os.getenv("LLM_API_URL", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
 
-NEO4J_URI = os.getenv("NEO4J_URI", "")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
+ARCADEDB_URI = os.getenv("ARCADEDB_URI", "bolt://localhost:7687")
+ARCADEDB_HTTP_URL = os.getenv("ARCADEDB_HTTP_URL", "http://localhost:2480")
+ARCADEDB_DATABASE = os.getenv("ARCADEDB_DATABASE", "litrag")
+ARCADEDB_USER = os.getenv("ARCADEDB_USER", "root")
+ARCADEDB_PASSWORD = os.getenv("ARCADEDB_PASSWORD", "")

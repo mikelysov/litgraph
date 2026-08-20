@@ -1,10 +1,10 @@
 from typing import Protocol
 
 from loguru import logger
-from neo4j import GraphDatabase
 
-from src.config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from src.config import ARCADEDB_DATABASE
 from src.models import Paper, SearchResult
+from src.store.arcadedb import ensure_schema, get_driver
 
 
 class GraphStore(Protocol):
@@ -15,19 +15,8 @@ class GraphStore(Protocol):
     def is_healthy(self) -> bool: ...
 
 
-class MockStore(GraphStore):
-    def get_related_ids(self, paper_id: str) -> list[str]:
-        return []
-
-    def get_papers_by_ids(self, ids: list[str]) -> list[SearchResult]:
-        return []
-
-    def is_healthy(self) -> bool:
-        return True
-
-
-class Neo4jGraphStore:
-    """Neo4j-backed graph store.
+class ArcadeDBGraphStore:
+    """ArcadeDB-backed graph store.
 
     Node model:
         (:Paper {id, title, authors})        — paper node
@@ -44,34 +33,21 @@ class Neo4jGraphStore:
         "models": "model",
     }
 
-    def __init__(self, uri: str, user: str, password: str):
-        self._driver = GraphDatabase.driver(uri, auth=(user, password))
-        logger.info(f"Connected to Neo4j at {uri}")
-        self._init_schema()
+    def __init__(self):
+        self._driver = get_driver()
+        ensure_schema()
 
-    def _init_schema(self) -> None:
-        with self._driver.session() as session:
-            session.run(
-                "CREATE CONSTRAINT paper_id IF NOT EXISTS "
-                "FOR (p:Paper) REQUIRE p.id IS UNIQUE"
-            )
-            session.run(
-                "CREATE CONSTRAINT entity_name IF NOT EXISTS "
-                "FOR (e:Entity) REQUIRE (e.name, e.type) IS UNIQUE"
-            )
+    def _session(self):
+        return self._driver.session(database=ARCADEDB_DATABASE)
 
     def add_paper(self, paper: Paper, entities: dict[str, list[str]]) -> None:
         """Upsert paper node and link it to entity nodes."""
-        authors = ", ".join(paper.authors)
-        with self._driver.session() as session:
+        with self._session() as session:
             session.run(
-                """
-                MERGE (p:Paper {id: $id})
-                SET p.title = $title, p.authors = $authors
-                """,
+                "MERGE (p:Paper {id: $id}) SET p.title = $title, p.authors = $authors",
                 id=paper.id,
                 title=paper.title,
-                authors=authors,
+                authors=paper.authors,
             )
             for field in self.ENTITY_TYPES:
                 role = self.ROLE_ALIAS[field]
@@ -93,7 +69,7 @@ class Neo4jGraphStore:
 
     def get_related_ids(self, paper_id: str, limit: int = 10) -> list[str]:
         """Return paper IDs sharing entities with the given paper, ranked by overlap."""
-        with self._driver.session() as session:
+        with self._session() as session:
             records = session.run(
                 """
                 MATCH (p:Paper {id: $id})-[:USES]->(e:Entity)<-[:USES]-(other:Paper)
@@ -110,7 +86,7 @@ class Neo4jGraphStore:
     def get_papers_by_ids(self, ids: list[str]) -> list[SearchResult]:
         if not ids:
             return []
-        with self._driver.session() as session:
+        with self._session() as session:
             records = session.run(
                 """
                 MATCH (p:Paper) WHERE p.id IN $ids
@@ -118,16 +94,14 @@ class Neo4jGraphStore:
                 """,
                 ids=ids,
             )
-            results = []
-            for r in records:
-                results.append(
-                    SearchResult(
-                        id=r["id"],
-                        title=r["title"] or "",
-                        authors=(r["authors"] or "").split(", ") if r["authors"] else [],
-                    )
+            return [
+                SearchResult(
+                    id=r["id"],
+                    title=r["title"] or "",
+                    authors=r["authors"] or [],
                 )
-            return results
+                for r in records
+            ]
 
     def get_edges(self, paper_ids: list[str], limit: int = 50) -> list[tuple[str, str, float]]:
         """Return (source, target, weight) edges between papers sharing entities.
@@ -136,7 +110,7 @@ class Neo4jGraphStore:
         """
         if not paper_ids:
             return []
-        with self._driver.session() as session:
+        with self._session() as session:
             records = session.run(
                 """
                 MATCH (a:Paper)-[:USES]->(e:Entity)<-[:USES]-(b:Paper)
@@ -152,7 +126,7 @@ class Neo4jGraphStore:
 
     def get_all_paper_ids(self) -> set[str]:
         """Return the set of all paper IDs present in the graph."""
-        with self._driver.session() as session:
+        with self._session() as session:
             records = session.run("MATCH (p:Paper) RETURN p.id AS id")
             return {r["id"] for r in records}
 
@@ -161,17 +135,9 @@ class Neo4jGraphStore:
             self._driver.verify_connectivity()
             return True
         except Exception as e:
-            logger.warning(f"Neo4j health check failed: {e}")
+            logger.warning(f"ArcadeDB health check failed: {e}")
             return False
-
-    def close(self) -> None:
-        self._driver.close()
 
 
 def get_graph_store() -> GraphStore:
-    if NEO4J_URI and NEO4J_PASSWORD:
-        try:
-            return Neo4jGraphStore(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
-        except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
-    return MockStore()
+    return ArcadeDBGraphStore()

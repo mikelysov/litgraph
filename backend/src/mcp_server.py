@@ -4,19 +4,23 @@ import re
 from pathlib import Path
 
 from dotenv import load_dotenv
+import httpx
 from httpx import Client
-from loguru import logger
 from mcp.server.mcpserver import MCPServer
+
+from src.models import Paper
 
 load_dotenv()
 
 API_URL = os.getenv("LITGRAPH_API_URL", "http://localhost:8889/api")
-QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT = os.getenv("QDRANT_PORT", "6333")
+ARCADEDB_HTTP_URL = os.getenv("ARCADEDB_HTTP_URL", "http://localhost:2480")
+ARCADEDB_DATABASE = os.getenv("ARCADEDB_DATABASE", "litrag")
+ARCADEDB_USER = os.getenv("ARCADEDB_USER", "root")
+ARCADEDB_PASSWORD = os.getenv("ARCADEDB_PASSWORD", "")
 INGEST_PDF_ROOT = Path(os.getenv("INGEST_PDF_ROOT", "/docs")).resolve()
 
 _http = Client(base_url=API_URL, timeout=120.0)
-_qdrant = Client(base_url=f"http://{QDRANT_HOST}:{QDRANT_PORT}", timeout=30.0)
+_arcadedb = Client(base_url=ARCADEDB_HTTP_URL, timeout=30.0)
 
 mcp = MCPServer("Litgraph")
 
@@ -80,45 +84,41 @@ def ingest_paper(paper_id: str, title: str, authors: list[str], abstract: str) -
         return _api_error("ingest", e)
 
 
-@mcp.tool()
-def ingest_pdf(file_path: str) -> str:
-    """Parse PDF under INGEST_PDF_ROOT, fetch arXiv metadata if ID in filename, index via API."""
-    from pypdf import PdfReader
+def _resolve_pdf_url(url: str) -> str | None:
+    """Map an arXiv ID / abs-link to a downloadable PDF URL; pass http(s) through."""
+    stripped = url.strip()
+    abs_match = re.match(r"^https?://arxiv\.org/abs/(\d{4}\.\d{4,5})(?:v\d+)?$", stripped)
+    if abs_match:
+        return f"https://arxiv.org/pdf/{abs_match.group(1)}"
+    if re.match(r"^https?://", stripped):
+        return stripped
+    if re.match(r"^(\d{4}\.\d{4,5})(v\d+)?$", stripped):
+        return f"https://arxiv.org/pdf/{stripped}"
+    return None
 
-    from src.arxiv import fetch_paper_by_id
-    from src.models import Paper
 
-    resolved = _resolve_pdf_path(file_path)
-    if isinstance(resolved, str):
-        return resolved
+def _download_pdf(url: str) -> Path | str:
+    """Stream-download a PDF into the staging directory; return path or error string."""
+    from src.staging import ensure_staging
 
-    basename = resolved.name
-    stem = re.sub(r"\.pdf$", "", basename, flags=re.IGNORECASE)
-
+    name = Path(url.split("?", 1)[0]).name or "paper.pdf"
+    if not name.lower().endswith(".pdf"):
+        name += ".pdf"
+    dest = ensure_staging() / name
     try:
-        reader = PdfReader(str(resolved))
-        pdf_text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        with httpx.stream("GET", url, follow_redirects=True, timeout=120.0) as resp:
+            resp.raise_for_status()
+            with dest.open("wb") as f:
+                for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                    f.write(chunk)
     except Exception as e:
-        return f"Error: failed to parse PDF: {e}"
+        dest.unlink(missing_ok=True)
+        return f"Error: download failed: {e}"
+    return dest
 
-    if not pdf_text.strip():
-        return f"Error: no text extracted from {basename}"
 
-    paper: Paper | None = None
-    arxiv_match = re.match(r"^(\d{4}\.\d{4,5})(v\d+)?$", stem)
-    if arxiv_match:
-        logger.info(f"arXiv ID detected: {stem}, fetching metadata...")
-        paper = fetch_paper_by_id(stem)
-        if paper:
-            paper.abstract = f"{paper.abstract}\n\n{pdf_text[:15000]}"
-            logger.info(f"Using arXiv metadata for {paper.id}: {paper.title[:60]}")
-
-    if paper is None:
-        paper = Paper(
-            id=stem, url="", title=stem, authors=[], abstract=pdf_text[:10000]
-        )
-        logger.info(f"No arXiv metadata, using filename as ID: {stem}")
-
+def _ingest_paper(paper: Paper, pages: int, text_len: int) -> str:
+    """POST a parsed paper to /ingest; return the result message."""
     body = {
         "id": paper.id,
         "url": paper.url,
@@ -131,30 +131,70 @@ def ingest_pdf(file_path: str) -> str:
         resp.raise_for_status()
     except Exception as e:
         return _api_error("ingest", e)
-
     return (
         f"Ingested {paper.id}: {paper.title[:60]}... "
-        f"OK, pages={len(reader.pages)}, text_len={len(pdf_text)}"
+        f"OK, pages={pages}, text_len={text_len}"
     )
+
+
+@mcp.tool()
+def ingest_pdf(url: str | None = None, file_path: str | None = None) -> str:
+    """Ingest a PDF from a URL (server downloads) or from a path under INGEST_PDF_ROOT."""
+    if (url is None) == (file_path is None):
+        return "Error: provide exactly one of url or file_path"
+
+    from src.pdf import parse_pdf_to_paper
+    from src.staging import sweep_staging
+
+    sweep_staging()
+
+    if file_path is not None:
+        resolved = _resolve_pdf_path(file_path)
+        if isinstance(resolved, str):
+            return resolved
+        try:
+            paper, pages, text_len = parse_pdf_to_paper(resolved)
+        except Exception as e:
+            return f"Error: failed to parse PDF: {e}"
+        return _ingest_paper(paper, pages, text_len)
+
+    assert url is not None
+    download_url = _resolve_pdf_url(url)
+    if download_url is None:
+        return f"Error: cannot parse source: {url}"
+
+    local = _download_pdf(download_url)
+    if isinstance(local, str):
+        return local
+    try:
+        paper, pages, text_len = parse_pdf_to_paper(local)
+    except Exception as e:
+        return f"Error: failed to parse PDF: {e}"
+    finally:
+        local.unlink(missing_ok=True)
+    return _ingest_paper(paper, pages, text_len)
 
 
 @mcp.tool()
 def get_paper(paper_id: str) -> str:
     """Fetch full paper details (title, authors, abstract) by arXiv ID."""
     try:
-        resp = _qdrant.post(
-            "/collections/papers/points/scroll",
+        escaped = paper_id.replace("'", "''")
+        resp = _arcadedb.post(
+            f"/api/v1/command/{ARCADEDB_DATABASE}",
             json={
-                "filter": {"must": [{"key": "id", "match": {"value": paper_id}}]},
-                "limit": 1,
-                "with_payload": True,
+                "language": "sql",
+                "command": (
+                    f"SELECT id, title, authors, abstract FROM Paper WHERE id = '{escaped}'"
+                ),
             },
+            auth=(ARCADEDB_USER, ARCADEDB_PASSWORD),
         )
         resp.raise_for_status()
-        points = resp.json().get("result", {}).get("points", [])
-        if not points:
+        rows = resp.json().get("result", [])
+        if not rows:
             return f"Paper {paper_id} not found."
-        p = points[0]["payload"]
+        p = rows[0]
         return json.dumps(
             {
                 "id": p.get("id", paper_id),

@@ -23,9 +23,9 @@ def is_redis_available() -> bool:
 
 def is_graph_available() -> bool:
     try:
-        from .graph import get_graph_store, MockStore
+        from .graph import get_graph_store
         g = get_graph_store()
-        return not isinstance(g, MockStore) and g.is_healthy()
+        return g.is_healthy()
     except Exception:
         return False
 

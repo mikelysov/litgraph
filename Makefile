@@ -15,7 +15,7 @@ else
   compose_cmd := $(compose)
 endif
 
-.PHONY: up down clean logs qdrant up-app up-worker up-full-dev up-full-prod \
+.PHONY: up down clean logs arcadedb up-app up-worker up-full-dev up-full-prod \
         rebuild build-all once-worker
 
 # Core commands
@@ -35,7 +35,7 @@ logs-%:
 	$(compose) logs -f $*
 
 # Shorthands
-qdrant: ; $(compose) --profile core up -d qdrant
+arcadedb: ; $(compose) --profile core up -d arcadedb
 up-app: ; $(compose) --profile core --profile redis-local --profile app up -d
 up-worker: ; $(compose) --profile core --profile redis-local --profile worker up -d
 

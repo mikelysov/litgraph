@@ -1,6 +1,8 @@
 import asyncio
+from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from loguru import logger
 
 from src.llm import generate_rag_answer_async, rerank
@@ -13,12 +15,16 @@ from src.models import (
     GraphEdge,
     SearchResponse,
 )
+from src.pdf import parse_pdf_to_paper
 from src.pipeline import run_pipeline
 from src.queuing import enqueue_papers
+from src.staging import ensure_staging, sweep_staging
 from src.store import get_paper_index, health_check
 from src.store.core import search as vector_search
 
 router = APIRouter()
+
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 
 @router.post("/ingest")
@@ -26,6 +32,30 @@ async def ingest(body: Paper) -> list[dict]:
     logger.info(f"Ingesting paper {body.id}: {body.title[:60]}...")
     states = await asyncio.to_thread(enqueue_papers, [body])
     return [s.model_dump() for s in states]
+
+
+@router.post("/ingest/upload")
+async def ingest_upload(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Accept a PDF file (≤200MB), parse, enqueue for indexing, delete the staged file."""
+    sweep_staging()
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="filename required")
+    dest = ensure_staging() / Path(file.filename).name
+    try:
+        size = 0
+        with dest.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="file exceeds 200MB limit")
+                out.write(chunk)
+        paper, _pages, _text_len = parse_pdf_to_paper(dest)
+        states = await asyncio.to_thread(enqueue_papers, [paper])
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    finally:
+        dest.unlink(missing_ok=True)
+    return states[0].model_dump()
 
 
 @router.get("/pipeline", response_model=list[IngestEvent])
@@ -95,21 +125,20 @@ async def search(
     ]
     edges: list[GraphEdge] = []
     try:
-        from src.store.graph import MockStore, get_graph_store
+        from src.store.graph import get_graph_store
 
         def _collect_edges() -> list[GraphEdge]:
             g = get_graph_store()
             out: list[GraphEdge] = []
-            if not isinstance(g, MockStore):
-                for source, target, weight in g.get_edges(list(all_ids)):
-                    out.append(
-                        GraphEdge(
-                            source=source,
-                            target=target,
-                            weight=weight,
-                            type="shared_entity",
-                        )
+            for source, target, weight in g.get_edges(list(all_ids)):
+                out.append(
+                    GraphEdge(
+                        source=source,
+                        target=target,
+                        weight=weight,
+                        type="shared_entity",
                     )
+                )
             return out
 
         edges = await asyncio.to_thread(_collect_edges)

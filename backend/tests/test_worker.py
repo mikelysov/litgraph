@@ -45,27 +45,33 @@ def test_get_batch_with_invalid_paper(mock_redis):
 @patch("src.worker.get_redis_conn")
 @patch("src.worker.get_vector_store")
 @patch("src.worker.get_paper_index")
+@patch("src.worker.get_graph_store")
+@patch("src.worker.extract_entities")
 @patch("src.worker.embed_papers")
 def test_process_batch_happy_path(
-    mock_embed, mock_get_index, mock_get_store, mock_get_redis, sample_paper
+    mock_embed, mock_extract, mock_get_graph, mock_get_index, mock_get_store, mock_get_redis, sample_paper
 ):
     mock_embed.return_value = np.random.rand(1, 384).astype(np.float32)
+    mock_extract.return_value = {"methods": [], "datasets": [], "tasks": [], "models": []}
     mock_index = MagicMock()
     mock_store = MagicMock()
+    mock_graph = MagicMock()
     mock_redis = MagicMock()
     mock_get_store.return_value = mock_store
     mock_get_index.return_value = mock_index
+    mock_get_graph.return_value = mock_graph
     mock_get_redis.return_value = mock_redis
 
     process_batch([sample_paper])
 
     mock_embed.assert_called_once()
     mock_store.index.assert_called_once()
+    mock_graph.add_paper.assert_called_once()
     mock_index.set.assert_called_once_with(
         PaperState(
             id=sample_paper.id,
             status=PaperStatus.EMBEDDED,
-            in_graph=False,
+            in_graph=True,
         )
     )
     mock_redis.srem.assert_called_once()
@@ -103,7 +109,7 @@ def test_process_batch_parallel_extract():
         mock_get_store.return_value = MagicMock()
         index = MagicMock()
         mock_get_index.return_value = index
-        mock_get_graph.return_value = MagicMock()  # not a MockStore
+        mock_get_graph.return_value = MagicMock()  # real graph store
         mock_get_redis.return_value = MagicMock()
 
         process_batch(papers)

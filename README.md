@@ -9,9 +9,9 @@ Graph-augmented semantic search for academic literature
 - 📄 Fetch papers from ArXiv API
 - 🧠 Queue papers for embedding (deferred, async)
 - 🧮 Track paper ingestion state in SQLite index
-- 📦 Index embeddings into Qdrant
-- 🔍 Search Qdrant with BGE-M3 embeddings
-- 🤖 LLM-powered RAG answers (Gemma 3 12B, remote API)
+- 📦 Index embeddings into ArcadeDB
+- 🔍 Search ArcadeDB with E5 embeddings
+- 🤖 LLM-powered RAG answers (qwen3.5-4b, remote API)
 - 🎯 Cross-encoder reranking (Jina Reranker V3)
 - 🔌 MCP server for AI agent integration (Claude Desktop, etc.)
 - 🧩 Merge vector + (planned) graph hits
@@ -25,8 +25,8 @@ Only reranker loaded at server startup (embeddings + LLM via remote API):
 
 | Model | Purpose | Size | Where |
 |-------|---------|------|-------|
-| BGE-M3 | Text embeddings (1024-dim) | ~560M | Remote API (`172.31.61.121:1234`) |
-| Gemma 3 12B | RAG answer generation | 12B | Remote API (`172.31.61.121:1234`) |
+| text-embedding-multilingual-e5-large-instruct | Text embeddings (1024-dim) | ~560M | Remote API (`172.31.61.121:1234`) |
+| qwen3.5-4b@q4_k_xl | RAG answer generation | 4B | Remote API (`172.31.61.121:1234`) |
 | Jina Reranker V3 | Cross-encoder reranking | 0.6B | Local filesystem |
 
 ## Usage
@@ -49,7 +49,6 @@ Services:
 
 - **API** → [http://localhost:8889/docs](http://localhost:8889/docs)
 - **MCP Server** → [http://localhost:8888/mcp](http://localhost:8888/mcp) (streamable-http)
-- **Qdrant UI** → [http://localhost:6333/dashboard](http://localhost:6333/dashboard)
 - **Redis** → localhost:6379 (use `redis-cli`)
 
 ### Direct tasks (no Docker)
@@ -71,14 +70,12 @@ poe test
 ### Environment
 
 ```env
-QDRANT_HOST=localhost
-QDRANT_PORT=6333
 REDIS_URL=redis://localhost:6379/0
 EMBEDDING_API_URL=http://172.31.61.121:1234/v1
-EMBEDDING_MODEL=text-embedding-bge-m3
+EMBEDDING_MODEL=text-embedding-multilingual-e5-large-instruct
 EMBEDDING_DIM=1024
 LLM_API_URL=http://172.31.61.121:1234/v1
-LLM_MODEL=qwen3.5-4b
+LLM_MODEL=qwen3.5-4b@q4_k_xl
 RERANKER_MODEL_PATH=/path/to/jina-reranker-v3
 MCP_PORT=8888
 ```
@@ -100,7 +97,7 @@ flowchart TD
     subgraph MCP["MCP Server :8888"]
         M1[ask tool] --> S[Semantic Search]
         S --> R[Rerank via Jina V3]
-        R --> L[Generate via Gemma 3]
+        R --> L[Generate via qwen3.5-4b]
     end
 
     subgraph Pipeline
@@ -114,19 +111,19 @@ flowchart TD
     end
 
     subgraph Models["Models (preloaded)"]
-        E1[BGE-M3 Embedder]
-        E2[Gemma 3 4B LLM]
+        E1[E5 Multilingual Embedder]
+        E2[qwen3.5-4b LLM]
         E3[Jina Reranker V3]
     end
 
     subgraph Vector Store
-        V1["Qdrant (hosted/local)"]
+        V1["ArcadeDB"]
     end
 
     subgraph Embedding Worker
         W1["Reads Redis queue"]
-        W1 --> EB[Embed papers via BGE-M3]
-        EB --> V[Upsert to Qdrant]
+        W1 --> EB[Embed papers via E5]
+        EB --> V[Upsert to ArcadeDB]
         V --> U[Update PaperIndex status]
     end
 
@@ -145,12 +142,12 @@ flowchart TD
 Stack highlights:
 
 - Backend: FastAPI + Pydantic + uv
-- LLM: llama-server remote API (Google Gemma 3 12B)
+- LLM: llama-server remote API (qwen3.5-4b@q4_k_xl)
 - Reranker: HuggingFace Transformers (Jina Reranker V3, local)
-- Embeddings: Remote API (`text-embedding-bge-m3` via llama-server)
+- Embeddings: Remote API (`text-embedding-multilingual-e5-large-instruct` via llama-server)
 - MCP: FastMCP (streamable-http)
 - Queue: Redis (Upstash or local)
-- Vector DB: Qdrant
+- Vector DB: ArcadeDB
 - Frontend: React + Vite + Tailwind
 - Infra: Docker Compose
 

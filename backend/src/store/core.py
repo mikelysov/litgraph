@@ -1,6 +1,6 @@
 from src.embedder import embed_query
 from src.models import SearchResult
-from src.store.graph import get_graph_store, MockStore
+from src.store.graph import get_graph_store
 from src.store.vector import get_vector_store
 
 
@@ -11,11 +11,7 @@ def search(query: str, expand_hops: int = 1, top_k: int = 5) -> list[SearchResul
     embedding = embed_query(query)
     top_results = vector.search(embedding, top_k=top_k)
 
-    # Skip enrichment if graph is mock (no graph backend configured)
-    if isinstance(graph, MockStore):
-        return top_results
-
-    # Enrich top results with graph-derived related papers (Qdrant remains source of truth)
+    # Enrich top results with graph-derived related papers (ArcadeDB is source of truth)
     enriched: list[SearchResult] = []
     seen: set[str] = set()
     for r in top_results:

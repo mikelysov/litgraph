@@ -3,13 +3,24 @@ name: litgraph-local
 volumes:
   frontend_node_modules:
   litgraph_cache:
+  litgraph_staging:
+  arcadedb_data:
 
 services:
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports: ["6333:6333", "6334:6334"]
+  arcadedb:
+    image: arcadedata/arcadedb:latest
+    ports: ["7687:7687", "2480:2480"]
+    environment:
+      - arcadedb.server.rootPassword=change-me
+      - arcadedb.server.plugins=Bolt:com.arcadedb.bolt.BoltProtocolPlugin
+      - arcadedb.server.defaultDatabases=litrag[]
     volumes:
-      - ./qdrant/data:/qdrant/storage
+      - arcadedb_data:/home/arcadedb/databases
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:2480/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     profiles: ["core"]
 
   redis:
@@ -26,19 +37,20 @@ services:
     volumes:
       - ../backend:/app
       - litgraph_cache:/cache
+      - litgraph_staging:/staging
       - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
     env_file:
-      - ./qdrant/.env
       - ./app/.env
     environment:
       - LITGRAPH_CACHE=/cache/litgraph/paper_index.db
+      - INGEST_STAGING_DIR=/staging
       - EMBEDDING_API_URL=http://172.31.61.121:1234/v1
       - EMBEDDING_MODEL=text-embedding-multilingual-e5-large-instruct
       - LLM_API_URL=http://172.31.61.121:1234/v1
       - LLM_MODEL=qwen3.5-4b@q4_k_xl
       - RERANKER_MODEL_PATH=/models/jina-reranker-v3
     depends_on:
-      qdrant:
+      arcadedb:
         condition: service_started
       redis:
         condition: service_started
@@ -57,7 +69,6 @@ services:
       - litgraph_cache:/cache
       - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
     env_file:
-      - ./qdrant/.env
       - ./app/.env
     environment:
       - LITGRAPH_CACHE=/cache/litgraph/paper_index.db
@@ -67,7 +78,7 @@ services:
       - LLM_MODEL=qwen3.5-4b@q4_k_xl
       - RERANKER_MODEL_PATH=/models/jina-reranker-v3
     depends_on:
-      qdrant:
+      arcadedb:
         condition: service_started
       redis:
         condition: service_started
@@ -102,13 +113,14 @@ services:
       - ../backend:/app
       - ../docs:/docs:ro
       - litgraph_cache:/cache
+      - litgraph_staging:/staging
       - /mnt/d/colab/llms/jina-reranker-v3:/models/jina-reranker-v3:ro
     env_file:
-      - ./qdrant/.env
       - ./app/.env
     environment:
       - LITGRAPH_API_URL=http://api:8888/api
       - LITGRAPH_CACHE=/cache/litgraph/paper_index.db
+      - INGEST_STAGING_DIR=/staging
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8888
       - INGEST_PDF_ROOT=/docs
@@ -121,7 +133,7 @@ services:
     depends_on:
       api:
         condition: service_started
-      qdrant:
+      arcadedb:
         condition: service_started
       redis:
         condition: service_started

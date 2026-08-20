@@ -11,6 +11,7 @@ from src.http_client import close_async_client, get_async_client
 from src.store import health_check
 from src.embedder import preload as preload_embedder
 from src.llm import preload as preload_llm
+from src.staging import sweep_staging
 
 load_dotenv()
 
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     preload_embedder()
     preload_llm()
     logger.info("All models loaded.")
+    sweep_staging()
     get_async_client()  # eagerly create pooled client for remote model APIs
     yield
     await close_async_client()

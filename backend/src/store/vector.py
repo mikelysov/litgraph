@@ -1,174 +1,92 @@
-import os
-import uuid
-from typing import Callable, Protocol
+import json
+from typing import Protocol
 
-import numpy as np
-from dotenv import load_dotenv
 from loguru import logger
 from numpy.typing import NDArray
-from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, PointStruct, VectorParams
 
-from src.config import EMBEDDING_DIM
+from src.config import ARCADEDB_DATABASE
 from src.models import Paper, SearchResult
+from src.store.arcadedb import ensure_schema, get_driver, sql, sql_quote
 
-load_dotenv()
-
-COLLECTION_NAME = "papers"
-VECTOR_DIM = EMBEDDING_DIM
-
-host = os.getenv("QDRANT_HOST", "localhost")
-port = int(os.getenv("QDRANT_PORT", 6333))
+VECTOR_INDEX = "Paper[embedding]"
+TOP_K = 5
 
 
 class VectorStore(Protocol):
-    def index(self, papers: list[Paper], vectors: NDArray[np.float32]) -> None: ...
+    def index(self, papers: list[Paper], vectors: NDArray) -> None: ...
 
-    def search(self, query_vector: NDArray[np.float32], top_k: int = 5) -> list[SearchResult]: ...
+    def search(self, query_vector: NDArray, top_k: int = 5) -> list[SearchResult]: ...
 
     def is_healthy(self) -> bool: ...
 
 
-class QdrantVectorStore(VectorStore):
-    def __init__(self, host: str = host, port: int = port):
-        self.client = QdrantClient(host=host, port=port, check_compatibility=False)
-        self.is_healthy()
+class ArcadeDBVectorStore:
+    def __init__(self):
+        self._driver = get_driver()
+        ensure_schema()
 
-    def ensure_collection(self) -> None:
-        """
-        Ensure the collection exists with correct vector dimension.
-        Raises if existing collection dimension mismatches EMBEDDING_DIM.
-        """
-        existing: list[str] = [
-            c.name for c in self.client.get_collections().collections
-        ]
-        logger.info(
-            f"Existing Qdrant collections: {[c.name for c in self.client.get_collections().collections]}"
-        )
-        if COLLECTION_NAME in existing:
-            info = self.client.get_collection(COLLECTION_NAME)
-            current_dim = info.config.params.vectors.size
-            if current_dim != VECTOR_DIM:
-                raise RuntimeError(
-                    f"Collection '{COLLECTION_NAME}' dim {current_dim} != expected {VECTOR_DIM}. "
-                    "Delete collection manually if recreate intended."
+    def index(self, papers: list[Paper], vectors: NDArray) -> None:
+        """Upsert paper metadata + embedding, then compute vector-derived related_ids."""
+        with self._driver.session(database=ARCADEDB_DATABASE) as session:
+            for paper, vector in zip(papers, vectors):
+                session.run(
+                    "MERGE (p:Paper {id: $id}) "
+                    "SET p.title = $title, p.authors = $authors, p.abstract = $abstract",
+                    id=paper.id,
+                    title=paper.title,
+                    authors=paper.authors,
+                    abstract=paper.abstract,
                 )
-        if COLLECTION_NAME not in existing:
-            logger.info(f"Creating collection '{COLLECTION_NAME}' (dim={VECTOR_DIM})...")
-            self.client.recreate_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(size=VECTOR_DIM, distance=Distance.COSINE),
-            )
-            logger.success(f"Collection '{COLLECTION_NAME}' created.")
+                # embedding is ARRAY_OF_FLOATS: set via SQL (Bolt sends generic LIST).
+                emb = [float(x) for x in vector.flatten()]
+                sql(f"UPDATE Paper SET embedding = {json.dumps(emb)} WHERE id = {sql_quote(paper.id)}")
 
-    def _to_point_id(self, paper_id: str) -> str:
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, paper_id))
-
-    def index(self, papers: list[Paper], vectors: NDArray[np.float32]) -> None:
-        """
-        Index the papers and their corresponding vectors into Qdrant.
-        """
-        # Ensure the collection exists
-        self.ensure_collection()
-
-        points: list[PointStruct] = []
-        for _, (paper, vector) in enumerate(zip(papers, vectors)):
-            points.append(
-                PointStruct(
-                    id=self._to_point_id(paper.id),
-                    vector=vector.flatten().tolist(),
-                    payload={
-                        "id": paper.id,
-                        "title": paper.title,
-                        "authors": paper.authors,
-                        "abstract": paper.abstract[:10000],
-                    },
-                )
-            )
-        logger.info(f"Indexing {len(papers)} papers into Qdrant...")
-        self.client.upsert(collection_name=COLLECTION_NAME, points=points)
-        logger.success(f"Successfully upserted {len(points)} points into '{COLLECTION_NAME}'")
-        count = self.client.count(COLLECTION_NAME, exact=True).count
-        logger.debug(f"Collection now contains {count} vectors")
-
-        # Compute and store related_ids for each newly indexed paper
-        TOP_K = 5
-        updates: list[PointStruct] = []
-        for _, (paper, vector) in enumerate(zip(papers, vectors)):
-            point_id = self._to_point_id(paper.id)
-            neighbors = self.client.query_points(
-                collection_name=COLLECTION_NAME,
-                query=vector.flatten().tolist(),
-                limit=TOP_K + 1,
-                with_payload=True,
-            ).points
-
-            related = []
-            for n in neighbors:
-                if n.id == point_id:
-                    continue
-                nid = (n.payload or {}).get("id", "")
-                if nid and len(related) < TOP_K:
-                    related.append(nid)
-
+        for paper, vector in zip(papers, vectors):
+            emb = [float(x) for x in vector.flatten()]
+            related = self._nearest_ids(emb, paper.id)
             if related:
-                payload = {
-                    "id": paper.id,
-                    "title": paper.title,
-                    "authors": paper.authors,
-                    "abstract": paper.abstract[:10000],
-                    "related_ids": related,
-                }
-                updates.append(
-                    PointStruct(id=point_id, vector=vector.flatten().tolist(), payload=payload)
+                sql(
+                    f"UPDATE Paper SET related_ids = {json.dumps(related)} "
+                    f"WHERE id = {sql_quote(paper.id)}"
                 )
+        logger.info(f"Indexed {len(papers)} papers into ArcadeDB")
 
-        if updates:
-            self.client.upsert(collection_name=COLLECTION_NAME, points=updates)
-            logger.debug(f"Updated related_ids for {len(updates)} papers")
+    def _nearest_ids(self, emb: list[float], exclude_id: str) -> list[str]:
+        rows = sql(f"SELECT vector.neighbors('{VECTOR_INDEX}', {json.dumps(emb)}, {TOP_K + 1}) AS n")
+        if not rows or not rows[0].get("n"):
+            return []
+        out: list[str] = []
+        for e in rows[0]["n"]:
+            eid = e.get("id")
+            if eid and eid != exclude_id and len(out) < TOP_K:
+                out.append(eid)
+        return out
 
-    def search(self, query_vector: NDArray[np.float32], top_k: int = 5) -> list[SearchResult]:
-        self.ensure_collection()
-        results = self.client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_vector[0].tolist(),
-            limit=top_k,
-        ).points
-        logger.info(f"Searching Qdrant for top {top_k} matches...")
-        return [
-            SearchResult(
-                id=(point.payload or {}).get("id", str(point.id)),
-                title=(point.payload or {}).get("title", ""),
-                authors=(point.payload or {}).get("authors", []),
-                abstract=(point.payload or {}).get("abstract", ""),
-                score=point.score,
-                related_ids=(point.payload or {}).get("related_ids", []),
+    def search(self, query_vector: NDArray, top_k: int = 5) -> list[SearchResult]:
+        emb = [float(x) for x in query_vector[0]]
+        rows = sql(f"SELECT vector.neighbors('{VECTOR_INDEX}', {json.dumps(emb)}, {top_k}) AS n")
+        results: list[SearchResult] = []
+        for e in (rows[0].get("n") or []) if rows else []:
+            results.append(
+                SearchResult(
+                    id=e.get("id", ""),
+                    title=e.get("title", "") or "",
+                    authors=e.get("authors", []) or [],
+                    abstract=e.get("abstract", "") or "",
+                    score=1.0 - float(e.get("distance", 1.0)),
+                    related_ids=e.get("related_ids", []) or [],
+                )
             )
-            for point in results
-        ]
+        return results
 
     def is_healthy(self) -> bool:
-        """
-        Check if the Qdrant instance is healthy.
-        """
         try:
-            self.client.get_collections()
-            logger.info("Qdrant is healthy.")
+            self._driver.verify_connectivity()
             return True
         except Exception as e:
-            logger.error(f"Qdrant is not healthy: {e}")
+            logger.warning(f"ArcadeDB health check failed: {e}")
             return False
 
 
-VECTOR_STORE: dict[str, Callable[[], VectorStore]] = {
-    "qdrant": QdrantVectorStore,
-}
-
-
-def get_vector_store(backend: str = "qdrant") -> VectorStore:
-    """
-    Get the vector store instance based on the backend specified.
-    """
-    if backend not in VECTOR_STORE:
-        raise ValueError(f"Unsupported vector store backend: {backend}")
-    return VECTOR_STORE[backend]()
+def get_vector_store() -> VectorStore:
+    return ArcadeDBVectorStore()

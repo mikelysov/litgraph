@@ -17,7 +17,7 @@ from src.llm import extract_entities
 from src.models import Paper, PaperState, PaperStatus
 from src.queuing import QUEUE_SET
 from src.store import get_paper_index, get_vector_store
-from src.store.graph import MockStore, get_graph_store
+from src.store.graph import get_graph_store
 from src.store.redis import get_redis_conn
 
 BATCH_SIZE = 8
@@ -89,26 +89,26 @@ def process_batch(papers: list[Paper]) -> None:
 
     successes = 0
 
-    # Extract entities in parallel (skipped for MockStore)
+    # Extract entities in parallel
     entities_by_id: dict[str, dict] = {}
-    if not isinstance(graph, MockStore):
-        def _extract(paper: Paper) -> tuple[str, dict | None]:
-            try:
-                return paper.id, extract_entities(paper.abstract)
-            except Exception as e:
-                logger.warning(f"Graph enrichment failed for {paper.id}: {e}")
-                return paper.id, None
 
-        with ThreadPoolExecutor(max_workers=min(BATCH_SIZE, len(papers))) as executor:
-            for pid, entities in executor.map(_extract, papers):
-                if entities is not None:
-                    entities_by_id[pid] = entities
+    def _extract(paper: Paper) -> tuple[str, dict | None]:
+        try:
+            return paper.id, extract_entities(paper.abstract)
+        except Exception as e:
+            logger.warning(f"Graph enrichment failed for {paper.id}: {e}")
+            return paper.id, None
+
+    with ThreadPoolExecutor(max_workers=min(BATCH_SIZE, len(papers))) as executor:
+        for pid, entities in executor.map(_extract, papers):
+            if entities is not None:
+                entities_by_id[pid] = entities
 
     # Index papers in vector store and update paper index
     for paper, vector in zip(papers, vectors):
         try:
             vector_store.index([paper], vector[np.newaxis, :])
-            # Add to graph only if entity extraction succeeded (skipped for MockStore)
+            # Add to graph only if entity extraction succeeded
             entities = entities_by_id.get(paper.id)
             if entities is not None:
                 graph.add_paper(paper, entities)
