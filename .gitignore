@@ -183,3 +183,9 @@ cython_debug/
 aliases/data.json
 raft_state.json
 collections/
+
+# Local tooling and memory (not part of the repo)
+.opencode/
+.vscode/
+AGENTS.md
+memory.md
