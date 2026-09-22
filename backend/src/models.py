@@ -54,7 +54,9 @@ class IngestEvent(BaseModel):
 
 class Paper(BaseModel):
     id: str
-    url: str
+    # Ceiling: nobody in the pipeline reads url today; "" keeps API payloads
+    # valid without it. If url ever gains a consumer, add format validation then.
+    url: str = ""
     title: str
     abstract: str
     authors: list[str]

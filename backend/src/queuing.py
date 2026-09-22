@@ -1,3 +1,5 @@
+import json
+
 from loguru import logger
 from upstash_redis import Redis
 
@@ -7,10 +9,43 @@ from src.store.redis import get_redis_conn
 
 QUEUE_LIST = "paper_queue"
 QUEUE_SET = "paper_queue_ids"
+MAX_ATTEMPTS = 3
 
 
-def enqueue_papers(papers: list[Paper]) -> list[PaperState]:
-    redis_conn: Redis = get_redis_conn()
+def dump_payload(paper: Paper, attempts: int = 0) -> str:
+    return json.dumps({"paper": paper.model_dump(), "attempts": attempts})
+
+
+def parse_payload(raw: str) -> tuple[Paper, int] | None:
+    """Bare Paper JSON (already queued) or {paper, attempts}. None if invalid."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    try:
+        if isinstance(data, dict) and "paper" in data:
+            return Paper.model_validate(data["paper"]), int(data.get("attempts") or 0)
+        return Paper.model_validate(data), 0
+    except Exception:
+        return None
+
+
+def _redis_enqueue(redis_conn: Redis, paper: Paper) -> bool:
+    """Add id+payload together. True if this call enqueued the paper."""
+    # Ceiling: crash between sadd and rpush leaves the id in the set with no
+    # payload in the list (manual fix: SREM paper_queue_ids <id>).
+    # Upgrade path: MULTI/EXEC (or pipeline) when a second worker appears.
+    payload = dump_payload(paper)
+    # sadd return 1 means the id was new; then rpush.
+    added = redis_conn.sadd(QUEUE_SET, paper.id)
+    if added is None or int(added) != 1:
+        return False
+    redis_conn.rpush(QUEUE_LIST, payload)
+    return True
+
+
+def enqueue_papers(papers: list[Paper], redis_conn: Redis | None = None) -> list[PaperState]:
+    redis_conn = redis_conn or get_redis_conn()
     index = get_paper_index()
     states: list[PaperState] = []
     to_index: list[PaperState] = []
@@ -25,16 +60,12 @@ def enqueue_papers(papers: list[Paper]) -> list[PaperState]:
             states.append(existing)
             continue
 
-        if redis_conn.sismember(QUEUE_SET, paper.id):
+        if not _redis_enqueue(redis_conn, paper):
             logger.debug(f"Skipping paper {paper.id} - already in Redis set.")
-            state = PaperState(id=paper.id, status=PaperStatus.QUEUED, in_graph=False)
-            states.append(state)
+            states.append(PaperState(id=paper.id, status=PaperStatus.QUEUED, in_graph=False))
             continue
 
         logger.debug(f"Enqueuing paper {paper.id} to Redis.")
-        redis_conn.rpush(QUEUE_LIST, paper.model_dump_json())
-        redis_conn.sadd(QUEUE_SET, paper.id)
-
         state = PaperState(id=paper.id, status=PaperStatus.QUEUED, in_graph=False)
         states.append(state)
         to_index.append(state)
@@ -46,44 +77,6 @@ def enqueue_papers(papers: list[Paper]) -> list[PaperState]:
 
 
 def enqueue_missing(papers: list[Paper], redis_conn: Redis) -> None:
-    """
-    Enqueue papers that are missing from the queue.
-
-    Args:
-        papers (list[Paper]): List of Paper objects to check and enqueue.
-        redis_conn (Redis): Redis connection object.
-    """
+    """Enqueue papers that are not already embedded or queued."""
     logger.info("Enqueuing missing papers...")
-    index = get_paper_index()
-    to_queue: list[PaperState] = []
-
-    for paper in papers:
-        state: PaperState | None = index.get(paper.id)
-
-        # Skip if already embedded or marked as queued
-        if state is not None and state.status in (PaperStatus.EMBEDDED, PaperStatus.QUEUED):
-            logger.debug(f"Skipping paper {paper.id} - already embedded or queued.")
-            continue
-
-        # Check Redis set for already-queued status
-        if redis_conn.sismember(QUEUE_SET, paper.id):
-            logger.debug(f"Skipping paper {paper.id} - already in Redis set.")
-            continue
-
-        # Add to Redis queue and set
-        logger.debug(f"Enqueuing paper {paper.id} to Redis.")
-        redis_conn.rpush(QUEUE_LIST, paper.model_dump_json())
-        redis_conn.sadd(QUEUE_SET, paper.id)
-
-        # Track for PaperIndex update
-        to_queue.append(
-            PaperState(
-                id=paper.id,
-                status=PaperStatus.QUEUED,
-                in_graph=False,
-            )
-        )
-
-    if to_queue:
-        index.set_many(to_queue)
-        logger.info(f"Enqueued {len(to_queue)} papers to Redis and updated PaperIndex.")
+    enqueue_papers(papers, redis_conn=redis_conn)
